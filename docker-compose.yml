@@ -1,0 +1,45 @@
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  # Toolchain container for building/testing without a host Go install.
+  app:
+    image: golang:1.23
+    working_dir: /src
+    volumes:
+      - .:/src
+      - gomod:/go/pkg/mod
+      - gobuild:/root/.cache/go-build
+    environment:
+      REDIS_ADDR: redis:6379
+      GOFLAGS: -buildvcs=false
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # The leaderboard server (built from this repo).
+  leaderboardd:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    environment:
+      REDIS_ADDR: redis:6379
+      LISTEN_ADDR: ":8080"
+      LB_LOG_BACKEND: redis
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  gomod:
+  gobuild:
