@@ -48,17 +48,17 @@ const (
 // by every engine operation because rank direction and score decoding depend
 // on it.
 type BoardConfig struct {
-	SortOrder    SortOrder
-	UpdatePolicy UpdatePolicy
-	TieBreak     TieBreak
+	SortOrder    SortOrder    `json:"sort_order"`
+	UpdatePolicy UpdatePolicy `json:"update_policy"`
+	TieBreak     TieBreak     `json:"tie_break"`
 	// ScoreBits reserves N high bits for the primary score when
 	// TieBreak=firstToReach. Remaining (53-ScoreBits) bits encode time in
 	// seconds since Epoch. Ignored for TieLexical. Default 20 (max score
 	// 1,048,575; ~272 years of timestamp range).
-	ScoreBits uint
+	ScoreBits uint `json:"score_bits,omitempty"`
 	// Epoch is the base time for firstToReach timestamp encoding. Zero value
 	// means 2020-01-01 UTC.
-	Epoch time.Time
+	Epoch time.Time `json:"epoch,omitempty"`
 }
 
 // withDefaults returns a copy with zero-value fields filled in.
@@ -110,10 +110,10 @@ func (c BoardConfig) validate() error {
 // BoardKey is the physical address of a single sorted set. App+Board identify
 // the logical board; Segment and Window slice it into physical sets.
 type BoardKey struct {
-	App     string
-	Board   string
-	Segment string // default "all"
-	Window  string // default "all"
+	App     string `json:"app"`
+	Board   string `json:"board"`
+	Segment string `json:"segment,omitempty"` // default "all"
+	Window  string `json:"window,omitempty"`  // default "all"
 }
 
 func sanitizeSegment(s string) string {
@@ -177,9 +177,9 @@ const (
 
 // WindowSpec describes one temporal dimension of a logical board.
 type WindowSpec struct {
-	Kind WindowKind
+	Kind WindowKind `json:"kind"`
 	// CustomID is used only when Kind==WindowCustom.
-	CustomID string
+	CustomID string `json:"custom_id,omitempty"`
 }
 
 // WindowID returns the concrete window bucket id for a given event time (UTC).
@@ -205,10 +205,10 @@ func (w WindowSpec) WindowID(t time.Time) string {
 // LogicalBoard is the developer-facing board definition. A single score event
 // fans out to len(Windows) x len(event.Segments) physical boards.
 type LogicalBoard struct {
-	App     string
-	Board   string
-	Config  BoardConfig
-	Windows []WindowSpec // at least one; defaults to [{WindowAllTime}]
+	App     string       `json:"app"`
+	Board   string       `json:"board"`
+	Config  BoardConfig  `json:"config"`
+	Windows []WindowSpec `json:"windows"` // at least one; defaults to [{WindowAllTime}]
 }
 
 // Event is a single score submission with the context needed to derive which

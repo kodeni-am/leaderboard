@@ -14,6 +14,7 @@ import (
 	"github.com/araasr/leaderboard/pkg/engine"
 	"github.com/araasr/leaderboard/pkg/ingest"
 	"github.com/araasr/leaderboard/pkg/tenancy"
+	"github.com/araasr/leaderboard/pkg/trust"
 	"github.com/araasr/leaderboard/pkg/window"
 )
 
@@ -25,11 +26,16 @@ type Server struct {
 	store      tenancy.Store
 	registry   *ingest.StaticRegistry
 	adminToken string
+	verifier   *trust.Verifier // optional HMAC anti-cheat; nil disables
 }
 
 func NewServer(eng engine.RankingEngine, ing *ingest.Ingestor, store tenancy.Store, registry *ingest.StaticRegistry, adminToken string) *Server {
 	return &Server{eng: eng, ing: ing, store: store, registry: registry, adminToken: adminToken}
 }
+
+// SetVerifier enables HMAC signature verification on score submissions. When
+// set, submits must carry a valid sig/ts/nonce.
+func (s *Server) SetVerifier(v *trust.Verifier) { s.verifier = v }
 
 // WarmRegistry loads all persisted board definitions into the in-memory
 // resolver. Call once at startup.
@@ -218,6 +224,10 @@ type submitReq struct {
 	Time     time.Time `json:"time,omitempty"`
 	Segments []string  `json:"segments,omitempty"`
 	Idem     string    `json:"idem,omitempty"`
+	// Anti-cheat (used only when the server has a verifier configured).
+	Sig   string `json:"sig,omitempty"`
+	TS    int64  `json:"ts,omitempty"`
+	Nonce string `json:"nonce,omitempty"`
 }
 
 func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
@@ -227,6 +237,12 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Member == "" {
 		writeErr(w, http.StatusBadRequest, "member and score required")
 		return
+	}
+	if s.verifier != nil {
+		if err := s.verifier.Verify(req.Sig, req.TS, time.Now(), app.ID, board, req.Member, req.Score, req.Nonce); err != nil {
+			writeErr(w, http.StatusUnauthorized, err.Error())
+			return
+		}
 	}
 	accepted, err := s.ing.Submit(r.Context(), ingest.Record{
 		App: app.ID, Board: board, Member: req.Member, Score: req.Score,

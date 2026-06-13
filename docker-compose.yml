@@ -34,6 +34,9 @@ services:
       REDIS_ADDR: redis:6379
       LISTEN_ADDR: ":8080"
       LB_LOG_BACKEND: redis
+      ADMIN_TOKEN: dev-admin-token
+      LB_REAPER_RETAIN: 168h
+      SIGNING_SECRET: ${SIGNING_SECRET:-}
     ports:
       - "8080:8080"
     depends_on:
