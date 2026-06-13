@@ -14,6 +14,7 @@ import (
 	"github.com/araasr/leaderboard/pkg/engine"
 	"github.com/araasr/leaderboard/pkg/ingest"
 	"github.com/araasr/leaderboard/pkg/tenancy"
+	"github.com/araasr/leaderboard/pkg/window"
 )
 
 // Server wires the engine, ingestor, tenant store, and the in-memory board
@@ -96,10 +97,8 @@ func physicalBoard(lb engine.LogicalBoard, r *http.Request) engine.Board {
 	if seg == "" {
 		seg = "all"
 	}
-	win := r.URL.Query().Get("window")
-	if win == "" {
-		win = "all"
-	}
+	// window may be a literal id or a cadence keyword (daily/weekly/monthly).
+	win := window.Resolve(r.URL.Query().Get("window"), time.Now().UTC())
 	return engine.Board{
 		Key:    engine.BoardKey{App: lb.App, Board: lb.Board, Segment: seg, Window: win},
 		Config: lb.Config,
