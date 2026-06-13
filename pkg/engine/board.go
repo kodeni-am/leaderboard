@@ -81,6 +81,10 @@ func (c BoardConfig) withDefaults() BoardConfig {
 	return c
 }
 
+// Validate reports whether the config is internally consistent. Exported for
+// callers (e.g. the API) that validate board definitions before persisting.
+func (c BoardConfig) Validate() error { return c.validate() }
+
 func (c BoardConfig) validate() error {
 	cc := c.withDefaults()
 	if cc.SortOrder != SortDesc && cc.SortOrder != SortAsc {
@@ -123,6 +127,10 @@ func sanitizeSegment(s string) string {
 func invalidComponent(s string) bool {
 	return strings.ContainsAny(s, ":{}\t\n\r ") || s == ""
 }
+
+// Validate reports whether the key components are structurally safe. Exported
+// for callers that validate board addresses before use.
+func (k BoardKey) Validate() error { return k.validate() }
 
 func (k BoardKey) validate() error {
 	seg := sanitizeSegment(k.Segment)
