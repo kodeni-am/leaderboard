@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type AppInfo, type KeyInfo, type RankEntry, type SigningState, ApiError } from "../api";
+import { api, type AppInfo, type KeyInfo, type RankEntry, type SigningState, type BoardSummary, type WindowSpec, ApiError } from "../api";
 import { useAuth } from "../auth";
 import { Logo, Field, Spinner, ConfirmDialog } from "../components";
 
@@ -141,15 +141,15 @@ function EmptyApps({ onCreate }: { onCreate: (name: string) => void }) {
 // ---- per-app workspace: boards + viewer + test submit ----
 
 function AppWorkspace({ appId, onAppDeleted }: { appId: string; onAppDeleted: () => void }) {
-  const [boards, setBoards] = useState<string[]>([]);
+  const [boards, setBoards] = useState<BoardSummary[]>([]);
   const [board, setBoard] = useState("");
   const [err, setErr] = useState("");
 
   async function loadBoards() {
     try {
       const { boards } = await api.listBoards(appId);
+      setBoards(boards);
       const ids = boards.map((b) => b.board);
-      setBoards(ids);
       setBoard((cur) => (cur && ids.includes(cur) ? cur : ids[0] ?? ""));
     } catch (e) {
       setErr((e as ApiError).message);
@@ -168,10 +168,10 @@ function AppWorkspace({ appId, onAppDeleted }: { appId: string; onAppDeleted: ()
         <AppKeys appId={appId} onDeleted={onAppDeleted} />
         <AppSigning appId={appId} />
         <BoardCreator appId={appId} onCreated={loadBoards} />
-        <BoardList boards={boards} active={board} onPick={setBoard} />
+        <BoardList boards={boards.map((b) => b.board)} active={board} onPick={setBoard} />
       </div>
       <div>
-        {board ? <Viewer appId={appId} board={board} /> : (
+        {board ? <Viewer key={board} appId={appId} board={board} windows={boards.find((b) => b.board === board)?.windows ?? []} /> : (
           <div className="panel dim" style={{ textAlign: "center", padding: 48 }}>Create a board to get started.</div>
         )}
       </div>
@@ -463,14 +463,44 @@ function BoardCreator({ appId, onCreated }: { appId: string; onCreated: () => vo
   );
 }
 
-function Viewer({ appId, board }: { appId: string; board: string }) {
+// windowOptions maps a board's defined windows to selectable {value,label}
+// pairs. value is what the API accepts (keyword for daily/weekly/monthly, the
+// literal id for custom, "all" for all-time). All-time is listed first so it
+// stays the default view — but only when the board actually defines it, so a
+// daily-only board defaults to its daily window rather than an empty all view.
+// (Scoping is window-only here; the viewer still shows the "all" segment.)
+function windowOptions(windows: WindowSpec[]): { value: string; label: string }[] {
+  const list = windows ?? [];
+  const seen = new Set<string>();
+  const out: { value: string; label: string }[] = [];
+  const add = (value: string, label: string) => {
+    if (!seen.has(value)) { seen.add(value); out.push({ value, label }); }
+  };
+  if (list.length === 0 || list.some((w) => w.kind === "all" || w.kind === "")) {
+    add("all", "All-time");
+  }
+  for (const w of list) {
+    switch (w.kind) {
+      case "daily": add("daily", "Daily"); break;
+      case "weekly": add("weekly", "Weekly"); break;
+      case "monthly": add("monthly", "Monthly"); break;
+      case "custom": if (w.custom_id) add(w.custom_id, w.custom_id); break;
+    }
+  }
+  if (out.length === 0) add("all", "All-time"); // defensive: only unknown kinds
+  return out;
+}
+
+function Viewer({ appId, board, windows }: { appId: string; board: string; windows: WindowSpec[] }) {
+  const opts = windowOptions(windows);
   const [entries, setEntries] = useState<RankEntry[]>([]);
+  const [win, setWin] = useState(opts[0]?.value ?? "all");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function loadTop() {
     try {
-      const { entries } = await api.top(appId, board, 25);
+      const { entries } = await api.top(appId, board, 25, { window: win });
       setEntries(entries);
       setErr("");
     } catch (e) {
@@ -481,13 +511,20 @@ function Viewer({ appId, board }: { appId: string; board: string }) {
   useEffect(() => {
     void loadTop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appId, board]);
+  }, [appId, board, win]);
 
   return (
     <div className="stack-sm">
       <div className="spread">
         <h3 className="mono" style={{ fontSize: 18 }}>{board}</h3>
-        <button className="btn btn-ghost btn-sm" onClick={() => void loadTop()}>Refresh</button>
+        <div className="row" style={{ gap: 8 }}>
+          {opts.length > 1 && (
+            <select value={win} onChange={(e) => setWin(e.target.value)} style={{ width: "auto" }} title="Window">
+              {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          )}
+          <button className="btn btn-ghost btn-sm" onClick={() => void loadTop()}>Refresh</button>
+        </div>
       </div>
 
       <TestSubmit
@@ -508,12 +545,14 @@ function Viewer({ appId, board }: { appId: string; board: string }) {
         }}
       />
 
-      <RankSearch appId={appId} board={board} />
+      <RankSearch appId={appId} board={board} window={win} />
 
       <div className="panel" style={{ padding: 0 }}>
-        <div className="eyebrow" style={{ padding: "14px 18px", borderBottom: "1px solid var(--line)" }}>TOP {entries.length}</div>
+        <div className="eyebrow" style={{ padding: "14px 18px", borderBottom: "1px solid var(--line)" }}>
+          TOP {entries.length}{win !== "all" ? ` · ${opts.find((o) => o.value === win)?.label ?? win}` : ""}
+        </div>
         {err && <div className="notice err" style={{ margin: 16 }}>{err}</div>}
-        {entries.length === 0 && !err && <div className="dim" style={{ padding: 18, fontSize: 14 }}>No entries yet — submit a score above.</div>}
+        {entries.length === 0 && !err && <div className="dim" style={{ padding: 18, fontSize: 14 }}>No entries in this window yet — submit a score above.</div>}
         {entries.length > 0 && (
           <table className="lb">
             <thead><tr><th>Rank</th><th>Member</th><th style={{ textAlign: "right" }}>Score</th></tr></thead>
@@ -555,7 +594,7 @@ function TestSubmit({ board, busy, onSubmit }: { appId: string; board: string; b
   );
 }
 
-function RankSearch({ appId, board }: { appId: string; board: string }) {
+function RankSearch({ appId, board, window }: { appId: string; board: string; window: string }) {
   const [member, setMember] = useState("");
   const [result, setResult] = useState<RankEntry | null>(null);
   const [msg, setMsg] = useState("");
@@ -565,9 +604,9 @@ function RankSearch({ appId, board }: { appId: string; board: string }) {
     setResult(null);
     setMsg("");
     try {
-      setResult(await api.rank(appId, board, member));
+      setResult(await api.rank(appId, board, member, { window }));
     } catch (e) {
-      setMsg((e as ApiError).status === 404 ? "Not on this board." : (e as ApiError).message);
+      setMsg((e as ApiError).status === 404 ? "Not in this window." : (e as ApiError).message);
     }
   }
 

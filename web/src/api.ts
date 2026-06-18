@@ -34,7 +34,15 @@ export interface BoardDef {
   sort_order?: string;
   update_policy?: string;
   tie_break?: string;
-  windows?: { kind: string }[];
+  windows?: WindowSpec[];
+}
+export interface WindowSpec {
+  kind: string;
+  custom_id?: string;
+}
+export interface BoardSummary {
+  board: string;
+  windows?: WindowSpec[];
 }
 export interface QueryOpts {
   segment?: string;
@@ -104,7 +112,7 @@ export const api = {
     req<SigningState>("PUT", `/v1/apps/${appId}/signing`, { require_signing: requireSigning }),
   rotateSigning: (appId: string) => req<SigningState>("POST", `/v1/apps/${appId}/signing/rotate`),
 
-  listBoards: (appId: string) => req<{ boards: { app: string; board: string }[] }>("GET", "/v1/boards", undefined, appHdr(appId)),
+  listBoards: (appId: string) => req<{ boards: BoardSummary[] }>("GET", "/v1/boards", undefined, appHdr(appId)),
   createBoard: (appId: string, def: BoardDef) => req<unknown>("POST", "/v1/boards", def, appHdr(appId)),
   submit: (appId: string, board: string, member: string, score: number, segments?: string[]) =>
     req<{ accepted: boolean }>("POST", `/v1/boards/${encodeURIComponent(board)}/scores`, { member, score, segments }, appHdr(appId)),
