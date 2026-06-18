@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/araasr/leaderboard/pkg/engine"
+	"github.com/kodeni-am/leaderboard/pkg/engine"
 )
 
 // Consumer is the simple pull-based projector: it reads each partition after a

@@ -13,7 +13,7 @@ scores and query ranks, top-N, neighbors, and friend leaderboards from Unity.
 **Via Package Manager (git URL):** Add to `Packages/manifest.json`:
 
 ```json
-"com.openleaderboard.sdk": "https://github.com/araasr/leaderboard.git?path=/sdk/unity"
+"com.openleaderboard.sdk": "https://github.com/kodeni-am/leaderboard.git?path=/sdk/unity"
 ```
 
 **Or** copy `sdk/unity/Runtime` into your project's `Assets/`.

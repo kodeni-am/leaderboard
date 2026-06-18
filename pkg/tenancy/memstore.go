@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/araasr/leaderboard/pkg/engine"
+	"github.com/kodeni-am/leaderboard/pkg/engine"
 )
 
 // MemStore is an in-memory Store for tests and single-process local runs.

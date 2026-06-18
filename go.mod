@@ -1,4 +1,4 @@
-module github.com/araasr/leaderboard
+module github.com/kodeni-am/leaderboard
 
 go 1.23.0
 

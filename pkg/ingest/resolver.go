@@ -4,7 +4,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/araasr/leaderboard/pkg/engine"
+	"github.com/kodeni-am/leaderboard/pkg/engine"
 )
 
 // ErrUnknownBoard is returned when a submission targets a board that has not

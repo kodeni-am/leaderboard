@@ -32,8 +32,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/araasr/leaderboard/pkg/engine"
-	"github.com/araasr/leaderboard/pkg/sdk"
+	"github.com/kodeni-am/leaderboard/pkg/engine"
+	"github.com/kodeni-am/leaderboard/pkg/sdk"
 	"github.com/redis/go-redis/v9"
 )
 

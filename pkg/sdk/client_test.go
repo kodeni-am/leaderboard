@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/araasr/leaderboard/pkg/api"
-	"github.com/araasr/leaderboard/pkg/engine"
-	"github.com/araasr/leaderboard/pkg/ingest"
-	"github.com/araasr/leaderboard/pkg/tenancy"
+	"github.com/kodeni-am/leaderboard/pkg/api"
+	"github.com/kodeni-am/leaderboard/pkg/engine"
+	"github.com/kodeni-am/leaderboard/pkg/ingest"
+	"github.com/kodeni-am/leaderboard/pkg/tenancy"
 	"github.com/redis/go-redis/v9"
 )
 

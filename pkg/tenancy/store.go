@@ -8,7 +8,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/araasr/leaderboard/pkg/engine"
+	"github.com/kodeni-am/leaderboard/pkg/engine"
 )
 
 var (
