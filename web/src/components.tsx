@@ -47,6 +47,45 @@ export function Spinner({ full }: { full?: boolean }) {
   );
 }
 
+// Styled confirmation modal (replaces window.confirm). Click the backdrop or
+// Cancel to dismiss; Escape also cancels.
+export function ConfirmDialog({
+  title,
+  body,
+  confirmLabel = "Confirm",
+  danger,
+  onConfirm,
+  onCancel,
+}: {
+  title: string;
+  body: string;
+  confirmLabel?: string;
+  danger?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      className="modal-overlay"
+      onClick={onCancel}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onCancel();
+      }}
+    >
+      <div className="panel modal-card" onClick={(e) => e.stopPropagation()}>
+        <h3 style={{ fontSize: 20, marginBottom: 10 }}>{title}</h3>
+        <p className="dim" style={{ fontSize: 14, margin: 0 }}>{body}</p>
+        <div className="row" style={{ justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
+          <button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button>
+          <button className={"btn btn-sm" + (danger ? " btn-danger" : "")} onClick={onConfirm} autoFocus>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Centered card layout used by the auth screens.
 export function AuthShell({ title, subtitle, children, foot }: { title: string; subtitle?: string; children: ReactNode; foot?: ReactNode }) {
   return (

@@ -2,7 +2,7 @@ import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type AppInfo, type KeyInfo, type RankEntry, ApiError } from "../api";
 import { useAuth } from "../auth";
-import { Logo, Field, Spinner } from "../components";
+import { Logo, Field, Spinner, ConfirmDialog } from "../components";
 
 export default function Dashboard() {
   const { user, setUser } = useAuth();
@@ -207,6 +207,12 @@ function AppKeys({ appId, onDeleted }: { appId: string; onDeleted: () => void })
   const [keys, setKeys] = useState<KeyInfo[]>([]);
   const [newKey, setNewKey] = useState("");
   const [err, setErr] = useState("");
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    body: string;
+    label: string;
+    onYes: () => Promise<void>;
+  } | null>(null);
 
   async function load() {
     try {
@@ -233,52 +239,78 @@ function AppKeys({ appId, onDeleted }: { appId: string; onDeleted: () => void })
       setErr((e as ApiError).message);
     }
   }
-  async function revoke(id: string) {
-    if (keys.length <= 1 && !window.confirm("Revoke the last key? The app will have no working key until you create a new one.")) return;
-    try {
-      await api.revokeKey(appId, id);
-      await load();
-    } catch (e) {
-      setErr((e as ApiError).message);
-    }
+
+  function askRevoke(k: KeyInfo) {
+    const last = keys.length <= 1;
+    setConfirmState({
+      title: "Revoke key?",
+      body: `${k.prefix} will stop working immediately.` + (last ? " This app will then have no usable key until you create a new one." : ""),
+      label: "Revoke key",
+      onYes: async () => {
+        await api.revokeKey(appId, k.id);
+        await load();
+      },
+    });
   }
-  async function del() {
-    if (!window.confirm("Delete this app? Its keys and boards are permanently removed.")) return;
-    try {
-      await api.deleteApp(appId);
-      onDeleted();
-    } catch (e) {
-      setErr((e as ApiError).message);
-    }
+  function askDelete() {
+    setConfirmState({
+      title: "Delete app?",
+      body: "This permanently removes the app, all its API keys, and its boards. This can't be undone.",
+      label: "Delete app",
+      onYes: async () => {
+        await api.deleteApp(appId);
+        onDeleted();
+      },
+    });
   }
 
   return (
-    <div className="panel">
-      <div className="spread" style={{ marginBottom: 12 }}>
-        <span className="eyebrow">API KEYS · {keys.length}</span>
-        <button className="btn btn-sm" onClick={() => void issue()}>+ New key</button>
-      </div>
-      {err && <div className="notice err">{err}</div>}
-      {newKey && (
-        <div className="notice ok" style={{ wordBreak: "break-all" }}>
-          <div style={{ marginBottom: 6 }}><b>New key</b> — copy now, shown once:</div>
-          <code className="muted-code" style={{ display: "block", marginBottom: 8 }}>{newKey}</code>
-          <button className="btn btn-sm" onClick={() => void navigator.clipboard?.writeText(newKey)}>Copy</button>
+    <>
+      <div className="panel">
+        <div className="spread" style={{ marginBottom: 12 }}>
+          <span className="eyebrow">API KEYS · {keys.length}</span>
+          <button className="btn btn-sm" onClick={() => void issue()}>+ New key</button>
         </div>
-      )}
-      <div className="stack-sm">
-        {keys.map((k) => (
-          <div key={k.id} className="spread" style={{ fontSize: 13 }}>
-            <code className="mono" style={{ color: "var(--cyan)" }}>{k.prefix}</code>
-            <button className="btn btn-ghost btn-sm" style={danger} onClick={() => void revoke(k.id)}>Revoke</button>
+        {err && <div className="notice err">{err}</div>}
+        {newKey && (
+          <div className="notice ok" style={{ wordBreak: "break-all" }}>
+            <div style={{ marginBottom: 6 }}><b>New key</b> — copy now, shown once:</div>
+            <code className="muted-code" style={{ display: "block", marginBottom: 8 }}>{newKey}</code>
+            <button className="btn btn-sm" onClick={() => void navigator.clipboard?.writeText(newKey)}>Copy</button>
           </div>
-        ))}
-        {keys.length === 0 && <div className="dim" style={{ fontSize: 13 }}>No active keys — create one.</div>}
+        )}
+        <div className="stack-sm">
+          {keys.map((k) => (
+            <div key={k.id} className="spread" style={{ fontSize: 13 }}>
+              <code className="mono" style={{ color: "var(--cyan)" }}>{k.prefix}</code>
+              <button className="btn btn-ghost btn-sm" style={danger} onClick={() => askRevoke(k)}>Revoke</button>
+            </div>
+          ))}
+          {keys.length === 0 && <div className="dim" style={{ fontSize: 13 }}>No active keys — create one.</div>}
+        </div>
+        <div style={{ borderTop: "1px solid var(--line)", marginTop: 14, paddingTop: 14 }}>
+          <button className="btn btn-ghost btn-sm" style={danger} onClick={askDelete}>Delete app</button>
+        </div>
       </div>
-      <div style={{ borderTop: "1px solid var(--line)", marginTop: 14, paddingTop: 14 }}>
-        <button className="btn btn-ghost btn-sm" style={danger} onClick={() => void del()}>Delete app</button>
-      </div>
-    </div>
+      {confirmState && (
+        <ConfirmDialog
+          title={confirmState.title}
+          body={confirmState.body}
+          confirmLabel={confirmState.label}
+          danger
+          onCancel={() => setConfirmState(null)}
+          onConfirm={async () => {
+            const fn = confirmState.onYes;
+            setConfirmState(null);
+            try {
+              await fn();
+            } catch (e) {
+              setErr((e as ApiError).message);
+            }
+          }}
+        />
+      )}
+    </>
   );
 }
 

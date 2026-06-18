@@ -473,3 +473,49 @@ pre.code {
     display: none;
   }
 }
+
+/* ---------- modal / confirm dialog ---------- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(6, 7, 9, 0.74);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  animation: reveal 0.16s ease both;
+}
+.modal-card {
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 30px 90px -30px rgba(0, 0, 0, 0.9);
+  border-color: var(--line-bright);
+}
+.btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.btn-danger:hover {
+  background: #ff6b7d;
+  box-shadow: 0 0 26px -4px rgba(255, 81, 103, 0.45);
+}
+
+/* ---------- select chevron ---------- */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  cursor: pointer;
+  padding-right: 36px;
+  background-color: var(--bg);
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='12'%20height='12'%20viewBox='0%200%2012%2012'%20fill='none'%20stroke='%2398a1ac'%20stroke-width='1.6'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M2.5%204.5L6%208l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+  background-size: 12px 12px;
+}
+select:focus {
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='12'%20height='12'%20viewBox='0%200%2012%2012'%20fill='none'%20stroke='%23c6f135'%20stroke-width='1.6'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M2.5%204.5L6%208l3.5-3.5'/%3E%3C/svg%3E");
+}
