@@ -15,6 +15,12 @@ test-engine:
 cover:
 	docker compose run --rm app go test ./... -count=1 -cover
 
+# Engine-mode load test against the compose Redis (validates read-latency-vs-size).
+loadtest:
+	docker compose run --rm -e REDIS_ADDR=redis:6379 app \
+	  go run ./cmd/loadtest -mode engine -redis redis:6379 \
+	  -sizes 1000,10000,100000,1000000 -readers 8 -writers 8 -dur 3s
+
 vet:
 	$(GO) vet ./...
 

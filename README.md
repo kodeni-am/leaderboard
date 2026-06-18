@@ -172,6 +172,35 @@ Tests run against a **real Redis** (sorted-set semantics like `ZADD GT` must be
 faithful), including a property test that checks engine ranks against a
 brute-force reference.
 
+## Benchmarking
+
+A load-test harness (`cmd/loadtest`) validates the core bet — that rank-read
+latency stays flat as a board grows — and finds the point where a single sorted
+set stops scaling.
+
+```bash
+make loadtest                              # engine mode against the compose Redis
+# or, against a running server (full stack):
+go run ./cmd/loadtest -mode http -url http://localhost:8080 \
+  -admin-token dev-admin-token -size 100000 -readers 16 -writers 16 -dur 5s
+```
+
+**Engine mode** seeds a board to each size and measures `GetRank` latency;
+**HTTP mode** drives a live server (API + ingest + consumer).
+
+Indicative local result (single Docker Redis on a laptop — *not* a production
+ElastiCache benchmark), showing read latency is essentially size-independent:
+
+| board size | reads/s | p50 | p90 | p99 |
+|---|---|---|---|---|
+| 1,000 | 92,883 | 77µs | 140µs | 242µs |
+| 10,000 | 92,451 | 78µs | 138µs | 239µs |
+| 100,000 | 91,830 | 79µs | 137µs | 239µs |
+| 1,000,000 | 92,997 | 80µs | 130µs | 222µs |
+
+p99 barely moves from 1k to 1M members — the O(log N) sorted-set property holds.
+Write throughput on the same box was ~91k best-wins submits/s into the 1M board.
+
 ## Deploying to AWS
 
 `deploy/terraform` provisions ElastiCache (ranking tier), Kinesis (durable log),
