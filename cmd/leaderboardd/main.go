@@ -37,6 +37,9 @@ func main() {
 		stream     = getenv("LB_STREAM", "lb:ingest")
 		adminToken = os.Getenv("ADMIN_TOKEN")
 		signingKey = os.Getenv("SIGNING_SECRET")
+		partitions = intEnv("INGEST_PARTITIONS", 16)
+		workerIdx  = intEnv("WORKER_INDEX", 0)
+		workerCnt  = intEnv("WORKER_COUNT", 1)
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -51,15 +54,18 @@ func main() {
 	store := tenancy.NewRedisStore(rdb)
 	registry := ingest.NewStaticRegistry()
 
+	// Build the log. For Redis we keep the concrete type so we can run the
+	// durable, partitioned consumer-group worker; mem uses the simple consumer.
 	var lg ingest.Log
+	var redisLog *ingest.RedisLog
 	switch logBackend {
 	case "mem":
 		lg = ingest.NewMemLog()
 	default:
-		lg = ingest.NewRedisLog(rdb, stream, 0)
+		redisLog = ingest.NewRedisLog(rdb, stream, partitions, 0)
+		lg = redisLog
 	}
 	ing := ingest.NewIngestor(lg, registry, ingest.NewRedisDeduper(rdb))
-	consumer := ingest.NewConsumer(lg, registry, eng)
 
 	srv := api.NewServer(eng, ing, store, registry, adminToken)
 	if signingKey != "" {
@@ -70,13 +76,31 @@ func main() {
 		log.Fatalf("warm registry: %v", err)
 	}
 
-	// Background workers: the consumer applies the log to the engine; the
-	// reaper expires aged-out time windows.
-	go func() {
-		if err := consumer.Run(ctx, 50*time.Millisecond); err != nil && ctx.Err() == nil {
-			log.Printf("consumer stopped: %v", err)
+	// Background workers: a consumer applies the log to the engine; the reaper
+	// expires aged-out time windows.
+	if redisLog != nil {
+		gc := ingest.NewGroupConsumer(redisLog, registry, eng, ingest.GroupOptions{
+			Consumer:    getenv("HOSTNAME", "c-0"),
+			WorkerIndex: workerIdx,
+			WorkerCount: workerCnt,
+		})
+		if err := gc.EnsureGroups(ctx); err != nil {
+			log.Fatalf("ensure consumer groups: %v", err)
 		}
-	}()
+		go func() {
+			if err := gc.Run(ctx, 30*time.Second); err != nil && ctx.Err() == nil {
+				log.Printf("group consumer stopped: %v", err)
+			}
+		}()
+		log.Printf("group consumer: partitions=%d worker=%d/%d owns=%v", partitions, workerIdx, workerCnt, gc.Owned())
+	} else {
+		consumer := ingest.NewConsumer(lg, registry, eng)
+		go func() {
+			if err := consumer.Run(ctx, 50*time.Millisecond); err != nil && ctx.Err() == nil {
+				log.Printf("consumer stopped: %v", err)
+			}
+		}()
+	}
 	if retain := os.Getenv("LB_REAPER_RETAIN"); retain != "" {
 		if d, err := time.ParseDuration(retain); err == nil {
 			interval := durationEnv("LB_REAPER_INTERVAL", time.Hour)
@@ -123,6 +147,15 @@ func waitForRedis(ctx context.Context, rdb redis.UniversalClient) error {
 		}
 		time.Sleep(time.Second)
 	}
+}
+
+func intEnv(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
 }
 
 func durationEnv(key string, def time.Duration) time.Duration {

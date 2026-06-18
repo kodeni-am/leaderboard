@@ -4,10 +4,16 @@
 // applies it to the engine. The log is the source of truth, so the Redis
 // ranking tier is a rebuildable cache and write bursts are absorbed by the log
 // rather than hammering Redis synchronously.
+//
+// The log is PARTITIONED by (app, board, member): all events for one member on
+// one board land in the same partition, so they are consumed in order. This
+// lets multiple workers consume different partitions in parallel (throughput)
+// while preserving the per-member ordering that last-write-wins depends on.
 package ingest
 
 import (
 	"context"
+	"hash/fnv"
 	"time"
 )
 
@@ -23,13 +29,50 @@ type Record struct {
 	Idem     string    `json:"idem,omitempty"` // client dedup key (optional)
 }
 
-// Log is the durable, ordered, append-only event log. Implementations: an
-// in-memory log (tests/local), a Redis Streams log (single-node/self-host),
-// and — as a future seam — Kinesis (the KinesisLog stub documents the contract).
+// Log is the durable, ordered, append-only, partitioned event log.
+// Implementations: an in-memory log (tests/local, 1 partition) and a Redis
+// Streams log (one stream per partition). Kinesis is a future seam.
 type Log interface {
-	// Append stores rec and sets rec.ID to the assigned cursor.
+	// Append stores rec (routing it to a partition) and sets rec.ID.
 	Append(ctx context.Context, rec *Record) error
-	// Read returns up to max records whose ID sorts strictly after `after`
-	// ("" means from the beginning), in append order.
-	Read(ctx context.Context, after string, max int) ([]Record, error)
+	// Partitions is the number of partitions in the log (>=1).
+	Partitions() int
+	// ReadPartition returns up to max records in partition p whose ID sorts
+	// strictly after `after` ("" = from the beginning), in append order. Used
+	// for rebuild/replay; live consumption uses GroupConsumer.
+	ReadPartition(ctx context.Context, p int, after string, max int) ([]Record, error)
+}
+
+// partitionOf routes a record to a partition by hashing (app, board, member).
+func partitionOf(app, board, member string, partitions int) int {
+	if partitions <= 1 {
+		return 0
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(app))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(board))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(member))
+	return int(h.Sum32() % uint32(partitions))
+}
+
+// OwnedPartitions returns the partitions a worker owns under static assignment:
+// partition p is owned by worker (p % workerCount). With workerCount<=1 a single
+// worker owns all partitions.
+func OwnedPartitions(partitions, workerIndex, workerCount int) []int {
+	if workerCount <= 1 {
+		owned := make([]int, partitions)
+		for i := range owned {
+			owned[i] = i
+		}
+		return owned
+	}
+	var owned []int
+	for p := 0; p < partitions; p++ {
+		if p%workerCount == workerIndex {
+			owned = append(owned, p)
+		}
+	}
+	return owned
 }

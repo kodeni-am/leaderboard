@@ -8,28 +8,22 @@ import (
 	"github.com/araasr/leaderboard/pkg/engine"
 )
 
-// Consumer reads records from the log and applies them to the ranking engine,
-// fanning each event out to its physical boards. It is the only writer to the
-// engine, which keeps the ranking tier a deterministic projection of the log.
+// Consumer is the simple pull-based projector: it reads each partition after a
+// per-partition cursor and applies records to the engine. It is used for the
+// in-memory log, local/single-process runs, and Rebuild. The durable,
+// horizontally-scaled live path on Redis is GroupConsumer.
 type Consumer struct {
 	log      Log
 	resolver BoardResolver
 	eng      engine.RankingEngine
 	batch    int
 
-	mu     sync.Mutex
-	cursor string
+	mu      sync.Mutex
+	cursors map[int]string // partition -> last applied id
 }
 
 func NewConsumer(log Log, resolver BoardResolver, eng engine.RankingEngine) *Consumer {
-	return &Consumer{log: log, resolver: resolver, eng: eng, batch: 256}
-}
-
-// Cursor returns the id of the last applied record.
-func (c *Consumer) Cursor() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.cursor
+	return &Consumer{log: log, resolver: resolver, eng: eng, batch: 256, cursors: map[int]string{}}
 }
 
 // recordToOps fans one record out to per-physical-board submit ops.
@@ -52,43 +46,50 @@ func recordToOps(lb engine.LogicalBoard, rec Record) []engine.SubmitOp {
 	return ops
 }
 
-// Step reads and applies the next batch. It returns the number of records
-// processed (0 when the log is drained).
-func (c *Consumer) Step(ctx context.Context) (int, error) {
-	c.mu.Lock()
-	cursor := c.cursor
-	c.mu.Unlock()
-
-	recs, err := c.log.Read(ctx, cursor, c.batch)
-	if err != nil {
-		return 0, err
-	}
-	if len(recs) == 0 {
-		return 0, nil
-	}
+// recordsToOps resolves and fans out a batch of records, skipping any whose
+// board is no longer registered.
+func recordsToOps(resolver BoardResolver, recs []Record) []engine.SubmitOp {
 	var ops []engine.SubmitOp
 	for _, rec := range recs {
-		lb, ok := c.resolver.Resolve(rec.App, rec.Board)
+		lb, ok := resolver.Resolve(rec.App, rec.Board)
 		if !ok {
-			// Board was deregistered after the event was logged; skip it but
-			// still advance past it.
 			continue
 		}
 		ops = append(ops, recordToOps(lb, rec)...)
 	}
-	if len(ops) > 0 {
-		if _, err := c.eng.SubmitBatch(ctx, ops); err != nil {
-			return 0, err
-		}
-	}
-	c.mu.Lock()
-	c.cursor = recs[len(recs)-1].ID
-	c.mu.Unlock()
-	return len(recs), nil
+	return ops
 }
 
-// Drain applies all currently-available records and returns when the log is
-// caught up.
+// Step reads and applies up to one batch per partition. It returns the total
+// number of records processed (0 when every partition is drained).
+func (c *Consumer) Step(ctx context.Context) (int, error) {
+	total := 0
+	for p := 0; p < c.log.Partitions(); p++ {
+		c.mu.Lock()
+		cur := c.cursors[p]
+		c.mu.Unlock()
+
+		recs, err := c.log.ReadPartition(ctx, p, cur, c.batch)
+		if err != nil {
+			return total, err
+		}
+		if len(recs) == 0 {
+			continue
+		}
+		if ops := recordsToOps(c.resolver, recs); len(ops) > 0 {
+			if _, err := c.eng.SubmitBatch(ctx, ops); err != nil {
+				return total, err
+			}
+		}
+		c.mu.Lock()
+		c.cursors[p] = recs[len(recs)-1].ID
+		c.mu.Unlock()
+		total += len(recs)
+	}
+	return total, nil
+}
+
+// Drain applies all currently-available records and returns when caught up.
 func (c *Consumer) Drain(ctx context.Context) error {
 	for {
 		n, err := c.Step(ctx)
@@ -102,7 +103,6 @@ func (c *Consumer) Drain(ctx context.Context) error {
 }
 
 // Run continuously applies records, polling at the given interval when idle.
-// It returns when ctx is cancelled.
 func (c *Consumer) Run(ctx context.Context, poll time.Duration) error {
 	if poll <= 0 {
 		poll = 50 * time.Millisecond
@@ -125,10 +125,10 @@ func (c *Consumer) Run(ctx context.Context, poll time.Duration) error {
 	}
 }
 
-// Rebuild replays the entire log from the beginning into eng, reconstructing
-// the ranking state. The target engine should be empty (best/increment replay
-// is order-independent; last-wins relies on the log's preserved order).
+// Rebuild replays the entire log into eng, reconstructing ranking state. The
+// target engine should be empty (best/increment replay is order-independent;
+// last-wins relies on each partition's preserved order, and a member's events
+// always share one partition).
 func Rebuild(ctx context.Context, log Log, resolver BoardResolver, eng engine.RankingEngine) error {
-	c := NewConsumer(log, resolver, eng)
-	return c.Drain(ctx)
+	return NewConsumer(log, resolver, eng).Drain(ctx)
 }

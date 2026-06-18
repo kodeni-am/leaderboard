@@ -173,11 +173,12 @@ func TestRebuildFromLog(t *testing.T) {
 func TestRedisLogAppendRead(t *testing.T) {
 	ctx := context.Background()
 	rdb := testRedis(t)
-	stream := "lb:test:" + ns(t)
-	_ = rdb.Del(ctx, stream)
-	t.Cleanup(func() { _ = rdb.Del(ctx, stream) })
+	prefix := "lb:test:" + ns(t)
+	// Single partition so all records (same member) stay in stream prefix:0.
+	log := NewRedisLog(rdb, prefix, 1, 0)
+	t.Cleanup(func() { _ = rdb.Del(ctx, log.StreamName(0)) })
+	_ = rdb.Del(ctx, log.StreamName(0))
 
-	log := NewRedisLog(rdb, stream, 0)
 	var firstID string
 	for i := 0; i < 4; i++ {
 		rec := Record{App: "g", Board: "score", Member: "p", Score: float64(i), Time: time.Now().UTC()}
@@ -188,7 +189,7 @@ func TestRedisLogAppendRead(t *testing.T) {
 			firstID = rec.ID
 		}
 	}
-	all, err := log.Read(ctx, "", 0)
+	all, err := log.ReadPartition(ctx, 0, "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +200,7 @@ func TestRedisLogAppendRead(t *testing.T) {
 		t.Errorf("ordering wrong: %v..%v", all[0].Score, all[3].Score)
 	}
 	// Cursor read after the first id -> 3 remaining.
-	rest, _ := log.Read(ctx, firstID, 0)
+	rest, _ := log.ReadPartition(ctx, 0, firstID, 0)
 	if len(rest) != 3 || rest[0].Score != 1 {
 		t.Errorf("cursor read: %d records, first %v", len(rest), rest[0].Score)
 	}

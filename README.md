@@ -136,6 +136,29 @@ All query endpoints accept `segment=` and `window=` (a literal id like
 | `ADMIN_TOKEN` | _(unset)_ | Required to create apps |
 | `SIGNING_SECRET` | _(unset)_ | Enables HMAC submission verification |
 | `LB_REAPER_RETAIN` | _(unset)_ | e.g. `168h` to enable the window reaper |
+| `INGEST_PARTITIONS` | `16` | Stream partitions (set once; changing it later rehashes routing) |
+| `WORKER_INDEX` | `0` | This worker's index for static partition ownership |
+| `WORKER_COUNT` | `1` | Total workers; each owns partitions where `p % count == index` |
+
+### Scaling consumers
+
+The ingest log is **partitioned by `(app, board, member)`** across `INGEST_PARTITIONS`
+Redis streams. The live consumer uses **Redis Streams consumer groups**
+(`XREADGROUP`/`XACK`), so:
+
+- **Offsets are durable** — a restart resumes from un-acked entries instead of
+  replaying the whole log (no double-counting on `increment` boards).
+- **Scale horizontally** — run N copies with `WORKER_COUNT=N` and distinct
+  `WORKER_INDEX` (0..N-1); each owns a disjoint set of partitions. Per-member
+  ordering is preserved because a member's events always share one partition.
+- **Crash recovery** — a dead worker's un-acked entries are reclaimed via
+  `XAUTOCLAIM`.
+
+Delivery is at-least-once with idempotent apply (each entry is marked applied
+after processing), so `best`/`last` are effectively exactly-once. The one
+residual: an `increment` board can over-count a single entry if a worker crashes
+in the narrow window between applying a batch and marking it — rare, and
+bounded to in-flight entries.
 
 ## Testing
 

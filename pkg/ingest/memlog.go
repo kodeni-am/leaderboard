@@ -7,8 +7,8 @@ import (
 	"sync"
 )
 
-// MemLog is an in-memory Log for tests and single-process local runs. It is
-// ordered and append-only but not durable across restarts.
+// MemLog is an in-memory single-partition Log for tests and single-process
+// local runs. It is ordered and append-only but not durable across restarts.
 type MemLog struct {
 	mu      sync.RWMutex
 	records []Record
@@ -16,6 +16,9 @@ type MemLog struct {
 
 // NewMemLog returns an empty in-memory log.
 func NewMemLog() *MemLog { return &MemLog{} }
+
+// Partitions is always 1 for the in-memory log.
+func (l *MemLog) Partitions() int { return 1 }
 
 func (l *MemLog) Append(_ context.Context, rec *Record) error {
 	l.mu.Lock()
@@ -27,7 +30,10 @@ func (l *MemLog) Append(_ context.Context, rec *Record) error {
 	return nil
 }
 
-func (l *MemLog) Read(_ context.Context, after string, max int) ([]Record, error) {
+func (l *MemLog) ReadPartition(_ context.Context, p int, after string, max int) ([]Record, error) {
+	if p != 0 {
+		return nil, fmt.Errorf("memlog: partition %d out of range (1 partition)", p)
+	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	start := 0

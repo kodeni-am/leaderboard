@@ -27,17 +27,17 @@ func TestMemLogAppendReadCursor(t *testing.T) {
 			t.Fatal("append did not set ID")
 		}
 	}
-	all, _ := l.Read(ctx, "", 0)
+	all, _ := l.ReadPartition(ctx, 0, "", 0)
 	if len(all) != 5 {
 		t.Fatalf("read all = %d, want 5", len(all))
 	}
 	// Cursor read: after the 2nd record -> 3 remaining.
-	rest, _ := l.Read(ctx, all[1].ID, 0)
+	rest, _ := l.ReadPartition(ctx, 0, all[1].ID, 0)
 	if len(rest) != 3 || rest[0].Score != 2 {
 		t.Fatalf("cursor read wrong: %d records, first score %v", len(rest), rest[0].Score)
 	}
 	// Max bounding.
-	two, _ := l.Read(ctx, "", 2)
+	two, _ := l.ReadPartition(ctx, 0, "", 2)
 	if len(two) != 2 {
 		t.Fatalf("max read = %d, want 2", len(two))
 	}
@@ -76,7 +76,7 @@ func TestIngestorAcceptAndDedup(t *testing.T) {
 	if err != nil || acc {
 		t.Fatalf("dup submit: acc=%v err=%v", acc, err)
 	}
-	all, _ := log.Read(ctx, "", 0)
+	all, _ := log.ReadPartition(ctx, 0, "", 0)
 	if len(all) != 1 {
 		t.Fatalf("dup was appended: %d records", len(all))
 	}
@@ -94,7 +94,8 @@ func TestIngestorUnknownBoard(t *testing.T) {
 type failingLog struct{}
 
 func (failingLog) Append(context.Context, *Record) error { return errors.New("boom") }
-func (failingLog) Read(context.Context, string, int) ([]Record, error) {
+func (failingLog) Partitions() int                       { return 1 }
+func (failingLog) ReadPartition(context.Context, int, string, int) ([]Record, error) {
 	return nil, nil
 }
 

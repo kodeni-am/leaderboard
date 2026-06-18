@@ -4,27 +4,41 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisLog is a durable Log backed by a Redis Stream (XADD/XRANGE). Suitable
-// for single-node and self-hosted deployments. On AWS the same Log interface is
-// satisfied by KinesisLog (see kinesis.go) without changing the consumer.
+// RedisLog is a durable, partitioned Log backed by Redis Streams. Each
+// partition is its own stream ("<prefix>:<p>"), so append throughput and
+// consumption parallelism scale with the partition count. Suitable for
+// single-node and self-hosted deployments.
 type RedisLog struct {
-	rdb    redis.UniversalClient
-	stream string
-	maxLen int64 // optional approximate cap (0 = unbounded)
+	rdb        redis.UniversalClient
+	prefix     string
+	partitions int
+	maxLen     int64 // optional approximate per-stream cap (0 = unbounded)
 }
 
-// NewRedisLog creates a stream-backed log. maxLen>0 trims the stream to roughly
-// that many entries (XADD MAXLEN ~). Use 0 to retain everything (needed if the
-// stream is the sole source of truth for rebuilds).
-func NewRedisLog(rdb redis.UniversalClient, stream string, maxLen int64) *RedisLog {
-	if stream == "" {
-		stream = "lb:ingest"
+// NewRedisLog creates a partitioned stream log. partitions<1 defaults to 1.
+// maxLen>0 trims each stream to roughly that many entries (XADD MAXLEN ~); use
+// 0 to retain everything (required if the log is the sole rebuild source).
+func NewRedisLog(rdb redis.UniversalClient, prefix string, partitions int, maxLen int64) *RedisLog {
+	if prefix == "" {
+		prefix = "lb:ingest"
 	}
-	return &RedisLog{rdb: rdb, stream: stream, maxLen: maxLen}
+	if partitions < 1 {
+		partitions = 1
+	}
+	return &RedisLog{rdb: rdb, prefix: prefix, partitions: partitions, maxLen: maxLen}
+}
+
+// Partitions returns the partition count.
+func (l *RedisLog) Partitions() int { return l.partitions }
+
+// StreamName returns the Redis stream key for partition p.
+func (l *RedisLog) StreamName(p int) string {
+	return l.prefix + ":" + strconv.Itoa(p)
 }
 
 func (l *RedisLog) Append(ctx context.Context, rec *Record) error {
@@ -32,8 +46,9 @@ func (l *RedisLog) Append(ctx context.Context, rec *Record) error {
 	if err != nil {
 		return fmt.Errorf("redislog: marshal: %w", err)
 	}
+	p := partitionOf(rec.App, rec.Board, rec.Member, l.partitions)
 	args := &redis.XAddArgs{
-		Stream: l.stream,
+		Stream: l.StreamName(p),
 		Values: map[string]any{"d": payload},
 	}
 	if l.maxLen > 0 {
@@ -48,7 +63,10 @@ func (l *RedisLog) Append(ctx context.Context, rec *Record) error {
 	return nil
 }
 
-func (l *RedisLog) Read(ctx context.Context, after string, max int) ([]Record, error) {
+func (l *RedisLog) ReadPartition(ctx context.Context, p int, after string, max int) ([]Record, error) {
+	if p < 0 || p >= l.partitions {
+		return nil, fmt.Errorf("redislog: partition %d out of range [0,%d)", p, l.partitions)
+	}
 	start := "-"
 	if after != "" {
 		start = "(" + after // exclusive of `after`
@@ -57,25 +75,42 @@ func (l *RedisLog) Read(ctx context.Context, after string, max int) ([]Record, e
 	var msgs []redis.XMessage
 	var err error
 	if max > 0 {
-		msgs, err = l.rdb.XRangeN(ctx, l.stream, start, "+", int64(max)).Result()
+		msgs, err = l.rdb.XRangeN(ctx, l.StreamName(p), start, "+", int64(max)).Result()
 	} else {
-		msgs, err = l.rdb.XRange(ctx, l.stream, start, "+").Result()
+		msgs, err = l.rdb.XRange(ctx, l.StreamName(p), start, "+").Result()
 	}
 	if err != nil {
 		return nil, fmt.Errorf("redislog: xrange: %w", err)
 	}
+	return messagesToRecords(msgs)
+}
+
+// messagesToRecords decodes Redis stream messages into Records, stamping each
+// record's ID with the stream message id.
+func messagesToRecords(msgs []redis.XMessage) ([]Record, error) {
 	out := make([]Record, 0, len(msgs))
 	for _, m := range msgs {
-		raw, ok := m.Values["d"].(string)
+		rec, ok, err := messageToRecord(m)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			continue
 		}
-		var rec Record
-		if err := json.Unmarshal([]byte(raw), &rec); err != nil {
-			return nil, fmt.Errorf("redislog: unmarshal %s: %w", m.ID, err)
-		}
-		rec.ID = m.ID
 		out = append(out, rec)
 	}
 	return out, nil
+}
+
+func messageToRecord(m redis.XMessage) (Record, bool, error) {
+	raw, ok := m.Values["d"].(string)
+	if !ok {
+		return Record{}, false, nil
+	}
+	var rec Record
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		return Record{}, false, fmt.Errorf("redislog: unmarshal %s: %w", m.ID, err)
+	}
+	rec.ID = m.ID
+	return rec, true, nil
 }
