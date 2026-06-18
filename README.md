@@ -55,7 +55,10 @@ Decisions are grounded in researched, verified production practice (see
 - **Multi-tenant:** apps with hashed API keys; per-app board definitions.
 - **Window lifecycle:** current-window resolution + a reaper that ages out old
   windows from the cache.
-- **Anti-cheat (optional):** HMAC-signed submissions with a replay window.
+- **Anti-cheat (optional, per-app):** opt-in HMAC-signed submissions with a
+  replay window. Each app gets its own signing secret (derived from a server
+  master key, never stored), so a public multi-tenant host can offer it
+  per-tenant without sharing one global secret.
 - **Reference Go SDK.**
 
 ## Quickstart (local, Docker)
@@ -153,7 +156,7 @@ All query endpoints accept `segment=` and `window=` (a literal id like
 | `PUBLIC_URL` | `http://localhost:8080` | Origin used in account email links |
 | `SECURE_COOKIES` | `false` | Set `true` behind HTTPS (Secure cookie flag) |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | _(unset)_ | Email transport; unset → console sender (links logged) |
-| `SIGNING_SECRET` | _(unset)_ | Enables HMAC submission verification |
+| `SIGNING_SECRET` | _(unset)_ | Master key for per-app signed submissions; per-app secrets are derived from it. Unset → apps can't enable signing |
 | `LB_REAPER_RETAIN` | _(unset)_ | e.g. `168h` to enable the window reaper |
 | `INGEST_PARTITIONS` | `16` | Stream partitions (set once; changing it later rehashes routing) |
 | `WORKER_INDEX` | `0` | This worker's index for static partition ownership |
@@ -306,7 +309,9 @@ In Runnable: connect the repo, enable **compose mode** with
 - `PUBLIC_URL` — the app's public URL (used in account email links)
 - `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` — for
   verification / reset email (required for signups)
-- `SIGNING_SECRET` — optional HMAC anti-cheat
+- `SIGNING_SECRET` — optional master key enabling per-app signed submissions
+  (anti-cheat). Tenants opt in per app from the dashboard and get their own
+  derived secret; keep this master key private. Safe to set on a shared host.
 
 `SECURE_COOKIES` is already `true` and `REDIS_ADDR=redis:6379` is wired. Pushes
 to the repo auto-deploy.

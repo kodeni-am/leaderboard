@@ -41,6 +41,22 @@ func Sign(secret, app, board, member string, score float64, ts int64, nonce stri
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// DeriveAppSecret derives a per-app signing secret from the server's master key
+// (the SIGNING_SECRET env), the app id, and a rotation version. It is
+// deterministic — the server recomputes it on demand to verify, and the
+// dashboard reveals it to the app owner — so no per-app secret is ever stored.
+// Bumping the version rotates the secret (invalidating signatures made with the
+// previous one). The master key is never exposed to tenants.
+func DeriveAppSecret(master, appID string, version int) string {
+	mac := hmac.New(sha256.New, []byte(master))
+	mac.Write([]byte("openleaderboard/app-signing/v1\n"))
+	mac.Write([]byte(appID))
+	mac.Write([]byte{'\n'})
+	mac.Write([]byte(strconv.Itoa(version)))
+	// "lbsk_" = leaderboard signing key, a recognizable prefix for the developer.
+	return "lbsk_" + hex.EncodeToString(mac.Sum(nil))
+}
+
 // Verifier validates signed submissions against a shared secret.
 type Verifier struct {
 	secret  string

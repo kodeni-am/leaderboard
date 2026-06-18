@@ -37,7 +37,7 @@ func (s *MemStore) CreateApp(ctx context.Context, ownerUserID, name string) (App
 	if err != nil {
 		return App{}, "", err
 	}
-	app := App{ID: id, Name: name, OwnerUserID: ownerUserID, CreatedAt: s.now()}
+	app := App{ID: id, Name: name, OwnerUserID: ownerUserID, CreatedAt: s.now(), SigningKeyVersion: 1}
 	s.mu.Lock()
 	s.apps[id] = app
 	s.boards[id] = map[string]engine.LogicalBoard{}
@@ -116,6 +116,36 @@ func (s *MemStore) DeleteApp(_ context.Context, appID string) error {
 	delete(s.boards, appID)
 	delete(s.apps, appID)
 	return nil
+}
+
+func (s *MemStore) SetRequireSigning(_ context.Context, appID string, require bool) (App, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	app, ok := s.apps[appID]
+	if !ok {
+		return App{}, ErrAppNotFound
+	}
+	app.RequireSigning = require
+	if require && app.SigningKeyVersion < 1 {
+		app.SigningKeyVersion = 1
+	}
+	s.apps[appID] = app
+	return app, nil
+}
+
+func (s *MemStore) RotateSigningKey(_ context.Context, appID string) (App, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	app, ok := s.apps[appID]
+	if !ok {
+		return App{}, ErrAppNotFound
+	}
+	if app.SigningKeyVersion < 1 {
+		app.SigningKeyVersion = 1
+	}
+	app.SigningKeyVersion++
+	s.apps[appID] = app
+	return app, nil
 }
 
 func (s *MemStore) GetApp(_ context.Context, id string) (App, error) {

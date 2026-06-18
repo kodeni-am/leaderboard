@@ -8,6 +8,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/kodeni-am/leaderboard/pkg/engine"
 	"github.com/kodeni-am/leaderboard/pkg/ingest"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
+	"github.com/kodeni-am/leaderboard/pkg/trust"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -62,7 +64,11 @@ type harness struct {
 	apiKey string
 }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T) *harness { return newHarnessWith(t, "") }
+
+// newHarnessWith builds the harness, optionally configuring a signing master key
+// so per-app signed submissions can be exercised.
+func newHarnessWith(t *testing.T, signingMaster string) *harness {
 	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
 	if addr == "" {
@@ -84,6 +90,9 @@ func newHarness(t *testing.T) *harness {
 	mem := accounts.NewMemStores()
 	acct := accounts.NewService(mem, mem, mem, mail, accounts.Config{BaseURL: "http://app"})
 	srv := NewServer(eng, ing, store, registry, acct, false)
+	if signingMaster != "" {
+		srv.SetSigningMaster(signingMaster, 5*time.Minute)
+	}
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	jar, _ := cookiejar.New(nil)
@@ -364,6 +373,130 @@ func TestApproxRankEndpoint(t *testing.T) {
 	h.call(t, http.MethodPost, "/v1/boards", h.key(), map[string]any{"board": "plain"})
 	if resp, _ := h.call(t, http.MethodGet, "/v1/boards/plain/rank?member=x&approx=true", h.key(), nil); resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("approx on plain board: got %d, want 400", resp.StatusCode)
+	}
+}
+
+// submitSigned signs a submission with `secret` and posts it via the API key,
+// returning the HTTP status code.
+func (h *harness) submitSigned(t *testing.T, secret, board, member string, score float64) int {
+	t.Helper()
+	ts := time.Now().Unix()
+	nonce := "n-" + member + "-" + strconv.FormatInt(ts, 10)
+	sig := trust.Sign(secret, h.appID, board, member, score, ts, nonce)
+	resp, _ := h.call(t, http.MethodPost, "/v1/boards/"+board+"/scores", h.key(), map[string]any{
+		"member": member, "score": score, "sig": sig, "ts": ts, "nonce": nonce,
+	})
+	return resp.StatusCode
+}
+
+func TestPerAppSignedSubmissions(t *testing.T) {
+	h := newHarnessWith(t, "test-master-key")
+	h.onboard(t, "sign@example.com")
+	t.Cleanup(func() {
+		_ = h.eng.Reset(context.Background(), engine.Board{Key: engine.BoardKey{App: h.appID, Board: "ranked", Segment: "all", Window: "all"}})
+	})
+	csrf := map[string]string{"X-CSRF-Token": h.csrf}
+	if resp, body := h.call(t, http.MethodPost, "/v1/boards", h.key(), map[string]any{"board": "ranked"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create board: %d %s", resp.StatusCode, body)
+	}
+
+	type sigState struct {
+		RequireSigning bool   `json:"require_signing"`
+		Version        int    `json:"version"`
+		Available      bool   `json:"available"`
+		Secret         string `json:"secret"`
+	}
+
+	// Signing is available (master set) but off by default; the derived secret is
+	// revealed to the owner.
+	resp, body := h.call(t, http.MethodGet, "/v1/apps/"+h.appID+"/signing", nil, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get signing: %d %s", resp.StatusCode, body)
+	}
+	var st sigState
+	json.Unmarshal(body, &st)
+	if !st.Available || st.RequireSigning || st.Version != 1 || !strings.HasPrefix(st.Secret, "lbsk_") {
+		t.Fatalf("unexpected signing state: %+v", st)
+	}
+	secret := st.Secret
+
+	// With signing off, an unsigned submit is accepted.
+	if code := func() int {
+		resp, _ := h.call(t, http.MethodPost, "/v1/boards/ranked/scores", h.key(), map[string]any{"member": "p1", "score": 10})
+		return resp.StatusCode
+	}(); code != http.StatusAccepted {
+		t.Errorf("unsigned submit (signing off): got %d, want 202", code)
+	}
+
+	// Enable signing.
+	if resp, body := h.call(t, http.MethodPut, "/v1/apps/"+h.appID+"/signing", csrf, map[string]any{"require_signing": true}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("enable signing: %d %s", resp.StatusCode, body)
+	}
+
+	// Now an unsigned submit is rejected, a correctly-signed one is accepted.
+	if code := func() int {
+		resp, _ := h.call(t, http.MethodPost, "/v1/boards/ranked/scores", h.key(), map[string]any{"member": "p2", "score": 20.0})
+		return resp.StatusCode
+	}(); code != http.StatusUnauthorized {
+		t.Errorf("unsigned submit (signing on): got %d, want 401", code)
+	}
+	if code := h.submitSigned(t, secret, "ranked", "p2", 20); code != http.StatusAccepted {
+		t.Errorf("signed submit: got %d, want 202", code)
+	}
+
+	// Rotate: new secret + version, old secret stops working.
+	resp, body = h.call(t, http.MethodPost, "/v1/apps/"+h.appID+"/signing/rotate", csrf, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("rotate: %d %s", resp.StatusCode, body)
+	}
+	var rot sigState
+	json.Unmarshal(body, &rot)
+	if rot.Version != 2 || rot.Secret == secret || !strings.HasPrefix(rot.Secret, "lbsk_") {
+		t.Fatalf("rotate state: %+v (old secret %s)", rot, secret)
+	}
+	if code := h.submitSigned(t, secret, "ranked", "p3", 30); code != http.StatusUnauthorized {
+		t.Errorf("submit with rotated-out secret: got %d, want 401", code)
+	}
+	if code := h.submitSigned(t, rot.Secret, "ranked", "p3", 30); code != http.StatusAccepted {
+		t.Errorf("submit with new secret: got %d, want 202", code)
+	}
+
+	// Turn signing off again -> unsigned accepted.
+	if resp, _ := h.call(t, http.MethodPut, "/v1/apps/"+h.appID+"/signing", csrf, map[string]any{"require_signing": false}); resp.StatusCode != http.StatusOK {
+		t.Fatal("disable signing failed")
+	}
+	if code := func() int {
+		resp, _ := h.call(t, http.MethodPost, "/v1/boards/ranked/scores", h.key(), map[string]any{"member": "p4", "score": 40})
+		return resp.StatusCode
+	}(); code != http.StatusAccepted {
+		t.Errorf("unsigned submit after disable: got %d, want 202", code)
+	}
+
+	// The signing endpoint is session-only: a fresh client with no cookie is 401.
+	if r, err := http.Get(h.ts.URL + "/v1/apps/" + h.appID + "/signing"); err != nil {
+		t.Fatal(err)
+	} else {
+		r.Body.Close()
+		if r.StatusCode != http.StatusUnauthorized {
+			t.Errorf("unauthenticated signing read: got %d, want 401", r.StatusCode)
+		}
+	}
+}
+
+// When no master key is configured, signing can't be enabled.
+func TestSigningUnavailableWithoutMaster(t *testing.T) {
+	h := newHarness(t) // no signing master
+	h.onboard(t, "nomaster@example.com")
+	resp, body := h.call(t, http.MethodGet, "/v1/apps/"+h.appID+"/signing", nil, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get signing: %d %s", resp.StatusCode, body)
+	}
+	if strings.Contains(string(body), `"available":true`) {
+		t.Errorf("signing should be unavailable without a master key: %s", body)
+	}
+	csrf := map[string]string{"X-CSRF-Token": h.csrf}
+	if resp, _ := h.call(t, http.MethodPut, "/v1/apps/"+h.appID+"/signing", csrf, map[string]any{"require_signing": true}); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("enabling signing without master: got %d, want 400", resp.StatusCode)
 	}
 }
 

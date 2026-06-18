@@ -8,6 +8,7 @@ const toc = [
   ["getting-started", "Getting started"],
   ["concepts", "Core concepts"],
   ["auth", "Authentication"],
+  ["signing", "Signed submissions"],
   ["rest", "REST API"],
   ["sdks", "SDKs"],
 ];
@@ -85,6 +86,22 @@ const top = await lb.getTop("high_scores", 10);`}</Code>
 # or
 X-API-Key: lb_your_api_key`}</Code>
             <p>The <b>dashboard</b> uses your account session (a cookie) plus an <span className="muted-code">X-App-Id</span> header — you don’t need to handle this directly; the dashboard does it for you. Keep API keys server-side or in your game build; never expose your account session.</p>
+          </section>
+
+          <section id="signing" className="docs-section">
+            <h2>Signed submissions (anti-cheat)</h2>
+            <p>Optional. In the <Link to="/dashboard">dashboard</Link>, each app can require score submissions to be <b>HMAC-signed</b>, so a leaked API key alone can’t post forged scores. Enable <b>“Require signed submissions”</b> and copy the app’s <b>signing secret</b> (rotate it anytime). Keep the secret on your game’s <b>server</b> — never in a public client build.</p>
+            <p>Sign a canonical message and include <span className="muted-code">sig</span>, <span className="muted-code">ts</span> (unix seconds), and a <span className="muted-code">nonce</span> in the submit body. The SDKs do this for you when you pass the secret:</p>
+            <Code>{`// the canonical message is newline-joined:
+//   app \\n board \\n member \\n score \\n ts \\n nonce
+// sig = hex( HMAC_SHA256(signing_secret, message) )
+
+const lb = new LeaderboardClient(apiUrl, apiKey, {
+  appId: "app_…",
+  signingSecret: "lbsk_…",   // server-side only
+});
+await lb.submit("high_scores", playerId, 1500); // signed automatically`}</Code>
+            <p className="dim" style={{ fontSize: 13 }}>Submissions are rejected (HTTP 401) if the signature is missing/invalid or the timestamp is outside a few minutes of server time. Apps that don’t enable this keep API-key-only auth.</p>
           </section>
 
           <section id="rest" className="docs-section">

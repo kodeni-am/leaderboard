@@ -31,9 +31,10 @@ type Server struct {
 	store         tenancy.Store
 	registry      *ingest.StaticRegistry
 	accounts      *accounts.Service
-	secureCookies bool            // set Secure on auth cookies (true behind TLS)
-	verifier      *trust.Verifier // optional HMAC anti-cheat; nil disables
-	webDir        string          // if set, serve the SPA from this dir (same origin)
+	secureCookies bool          // set Secure on auth cookies (true behind TLS)
+	signingMaster string        // master key; per-app secrets derived from it. "" disables signing.
+	signingSkew   time.Duration // allowed timestamp skew for signed submissions
+	webDir        string        // if set, serve the SPA from this dir (same origin)
 }
 
 // SetStaticDir enables serving the built dashboard SPA from dir on the same
@@ -45,9 +46,20 @@ func NewServer(eng engine.RankingEngine, ing *ingest.Ingestor, store tenancy.Sto
 	return &Server{eng: eng, ing: ing, store: store, registry: registry, accounts: acct, secureCookies: secureCookies}
 }
 
-// SetVerifier enables HMAC signature verification on score submissions. When
-// set, submits must carry a valid sig/ts/nonce.
-func (s *Server) SetVerifier(v *trust.Verifier) { s.verifier = v }
+// SetSigningMaster configures the master key from which per-app signing secrets
+// are derived (trust.DeriveAppSecret). Once set, apps that opt into
+// RequireSigning must send valid sig/ts/nonce; apps that don't are unaffected.
+// With no master key, signing can't be enabled for any app.
+func (s *Server) SetSigningMaster(master string, skew time.Duration) {
+	if skew <= 0 {
+		skew = 5 * time.Minute
+	}
+	s.signingMaster = master
+	s.signingSkew = skew
+}
+
+// signingEnabled reports whether the server can derive/verify per-app secrets.
+func (s *Server) signingEnabled() bool { return s.signingMaster != "" }
 
 // WarmRegistry loads all persisted board definitions into the in-memory
 // resolver. Call once at startup.
@@ -100,6 +112,9 @@ func (s *Server) Handler() http.Handler {
 	user("GET /v1/apps/{id}/keys", s.handleListKeys)
 	user("POST /v1/apps/{id}/keys", s.handleIssueKey)
 	user("DELETE /v1/apps/{id}/keys/{keyId}", s.handleRevokeKey)
+	user("GET /v1/apps/{id}/signing", s.handleGetSigning)
+	user("PUT /v1/apps/{id}/signing", s.handleSetSigning)
+	user("POST /v1/apps/{id}/signing/rotate", s.handleRotateSigning)
 
 	// Data plane (API-key or session+app-id).
 	dataPlane("POST /v1/boards", s.handleCreateBoard)
@@ -293,8 +308,17 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "member and score required")
 		return
 	}
-	if s.verifier != nil {
-		if err := s.verifier.Verify(req.Sig, req.TS, time.Now(), app.ID, board, req.Member, req.Score, req.Nonce); err != nil {
+	if app.RequireSigning {
+		if !s.signingEnabled() {
+			// App demands signing but the server has no master key to verify with.
+			// Fail closed rather than silently accepting unsigned writes.
+			submitsTotal.WithLabelValues("rejected").Inc()
+			writeErr(w, http.StatusServiceUnavailable, "signed submissions required but signing is not configured on this server")
+			return
+		}
+		secret := trust.DeriveAppSecret(s.signingMaster, app.ID, app.SigningKeyVersion)
+		v := trust.NewVerifier(secret, s.signingSkew)
+		if err := v.Verify(req.Sig, req.TS, time.Now(), app.ID, board, req.Member, req.Score, req.Nonce); err != nil {
 			submitsTotal.WithLabelValues("rejected").Inc()
 			writeErr(w, http.StatusUnauthorized, err.Error())
 			return

@@ -34,7 +34,7 @@ func (s *RedisStore) CreateApp(ctx context.Context, ownerUserID, name string) (A
 	if err != nil {
 		return App{}, "", err
 	}
-	app := App{ID: id, Name: name, OwnerUserID: ownerUserID, CreatedAt: time.Now().UTC()}
+	app := App{ID: id, Name: name, OwnerUserID: ownerUserID, CreatedAt: time.Now().UTC(), SigningKeyVersion: 1}
 	data, _ := json.Marshal(app)
 	pipe := s.rdb.TxPipeline()
 	pipe.Set(ctx, appKey(id), data, 0)
@@ -193,6 +193,39 @@ func (s *RedisStore) GetApp(ctx context.Context, id string) (App, error) {
 		return App{}, err
 	}
 	return app, nil
+}
+
+// mutateApp loads an app, applies fn, and persists the result atomically enough
+// for the dashboard's low-contention settings writes.
+func (s *RedisStore) mutateApp(ctx context.Context, appID string, fn func(*App)) (App, error) {
+	app, err := s.GetApp(ctx, appID)
+	if err != nil {
+		return App{}, err
+	}
+	fn(&app)
+	data, _ := json.Marshal(app)
+	if err := s.rdb.Set(ctx, appKey(appID), data, 0).Err(); err != nil {
+		return App{}, err
+	}
+	return app, nil
+}
+
+func (s *RedisStore) SetRequireSigning(ctx context.Context, appID string, require bool) (App, error) {
+	return s.mutateApp(ctx, appID, func(a *App) {
+		a.RequireSigning = require
+		if require && a.SigningKeyVersion < 1 {
+			a.SigningKeyVersion = 1
+		}
+	})
+}
+
+func (s *RedisStore) RotateSigningKey(ctx context.Context, appID string) (App, error) {
+	return s.mutateApp(ctx, appID, func(a *App) {
+		if a.SigningKeyVersion < 1 {
+			a.SigningKeyVersion = 1
+		}
+		a.SigningKeyVersion++
+	})
 }
 
 func (s *RedisStore) AppByKey(ctx context.Context, plaintextKey string) (App, error) {

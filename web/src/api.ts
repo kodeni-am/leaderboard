@@ -17,6 +17,12 @@ export interface KeyInfo {
   prefix: string;
   created_at?: string;
 }
+export interface SigningState {
+  require_signing: boolean;
+  version: number;
+  available: boolean;
+  secret?: string;
+}
 export interface RankEntry {
   member: string;
   score: number;
@@ -92,6 +98,11 @@ export const api = {
   listKeys: (appId: string) => req<{ keys: KeyInfo[] }>("GET", `/v1/apps/${appId}/keys`),
   issueKey: (appId: string) => req<{ id: string; prefix: string; api_key: string }>("POST", `/v1/apps/${appId}/keys`),
   revokeKey: (appId: string, keyId: string) => req<unknown>("DELETE", `/v1/apps/${appId}/keys/${keyId}`),
+
+  getSigning: (appId: string) => req<SigningState>("GET", `/v1/apps/${appId}/signing`),
+  setSigning: (appId: string, requireSigning: boolean) =>
+    req<SigningState>("PUT", `/v1/apps/${appId}/signing`, { require_signing: requireSigning }),
+  rotateSigning: (appId: string) => req<SigningState>("POST", `/v1/apps/${appId}/signing/rotate`),
 
   listBoards: (appId: string) => req<{ boards: { app: string; board: string }[] }>("GET", "/v1/boards", undefined, appHdr(appId)),
   createBoard: (appId: string, def: BoardDef) => req<unknown>("POST", "/v1/boards", def, appHdr(appId)),

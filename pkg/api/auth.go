@@ -13,6 +13,7 @@ import (
 
 	"github.com/kodeni-am/leaderboard/pkg/accounts"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
+	"github.com/kodeni-am/leaderboard/pkg/trust"
 )
 
 const (
@@ -360,6 +361,70 @@ func (s *Server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// signingState builds the response for an app's signing settings, including the
+// derived secret when the server has a master key. The secret is revealable to
+// the authenticated owner (it's derived, not stored), like a webhook secret.
+func (s *Server) signingState(app tenancy.App) map[string]any {
+	out := map[string]any{
+		"require_signing": app.RequireSigning,
+		"version":         app.SigningKeyVersion,
+		"available":       s.signingEnabled(),
+	}
+	if s.signingEnabled() {
+		out["secret"] = trust.DeriveAppSecret(s.signingMaster, app.ID, app.SigningKeyVersion)
+	}
+	return out
+}
+
+func (s *Server) handleGetSigning(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.ownedApp(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.signingState(app))
+}
+
+func (s *Server) handleSetSigning(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.ownedApp(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		RequireSigning bool `json:"require_signing"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.RequireSigning && !s.signingEnabled() {
+		writeErr(w, http.StatusBadRequest, "signing is not configured on this server (no master key)")
+		return
+	}
+	updated, err := s.store.SetRequireSigning(r.Context(), app.ID, req.RequireSigning)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.signingState(updated))
+}
+
+func (s *Server) handleRotateSigning(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.ownedApp(w, r)
+	if !ok {
+		return
+	}
+	if !s.signingEnabled() {
+		writeErr(w, http.StatusBadRequest, "signing is not configured on this server (no master key)")
+		return
+	}
+	updated, err := s.store.RotateSigningKey(r.Context(), app.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.signingState(updated))
 }
 
 func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {

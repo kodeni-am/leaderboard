@@ -35,6 +35,14 @@ type App struct {
 	Name        string    `json:"name"`
 	OwnerUserID string    `json:"owner_user_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
+	// RequireSigning makes the API reject unsigned score submissions for this
+	// app (HMAC anti-cheat). Opt-in per app, so apps that don't enable it keep
+	// API-key-only auth. The signing secret is derived from the server master
+	// key — see trust.DeriveAppSecret — never stored here.
+	RequireSigning bool `json:"require_signing,omitempty"`
+	// SigningKeyVersion rotates the derived signing secret: bumping it changes
+	// the secret and invalidates signatures made with the prior one. Starts at 1.
+	SigningKeyVersion int `json:"signing_key_version,omitempty"`
 }
 
 // Store persists tenants and their board definitions.
@@ -59,6 +67,13 @@ type Store interface {
 	RevokeKey(ctx context.Context, appID, keyID string) error
 	// DeleteApp removes an app and all of its keys and boards.
 	DeleteApp(ctx context.Context, appID string) error
+
+	// SetRequireSigning toggles whether the app rejects unsigned submissions,
+	// returning the updated app.
+	SetRequireSigning(ctx context.Context, appID string, require bool) (App, error)
+	// RotateSigningKey bumps the app's signing key version (rotating its derived
+	// secret) and returns the updated app.
+	RotateSigningKey(ctx context.Context, appID string) (App, error)
 
 	// UpsertBoard stores a board definition under its app.
 	UpsertBoard(ctx context.Context, lb engine.LogicalBoard) error

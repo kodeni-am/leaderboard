@@ -20,7 +20,6 @@ import (
 	"github.com/kodeni-am/leaderboard/pkg/engine"
 	"github.com/kodeni-am/leaderboard/pkg/ingest"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
-	"github.com/kodeni-am/leaderboard/pkg/trust"
 	"github.com/kodeni-am/leaderboard/pkg/window"
 	"github.com/redis/go-redis/v9"
 )
@@ -107,8 +106,8 @@ func main() {
 
 	srv := api.NewServer(eng, ing, store, registry, acctSvc, secureCk)
 	if signingKey != "" {
-		srv.SetVerifier(trust.NewVerifier(signingKey, 5*time.Minute))
-		log.Print("HMAC submission verification: ENABLED")
+		srv.SetSigningMaster(signingKey, 5*time.Minute)
+		log.Print("per-app HMAC signing: AVAILABLE (apps opt in via require_signing)")
 	}
 	if webDir := os.Getenv("WEB_DIR"); webDir != "" {
 		srv.SetStaticDir(webDir)

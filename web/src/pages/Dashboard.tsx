@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type AppInfo, type KeyInfo, type RankEntry, ApiError } from "../api";
+import { api, type AppInfo, type KeyInfo, type RankEntry, type SigningState, ApiError } from "../api";
 import { useAuth } from "../auth";
 import { Logo, Field, Spinner, ConfirmDialog } from "../components";
 
@@ -166,6 +166,7 @@ function AppWorkspace({ appId, onAppDeleted }: { appId: string; onAppDeleted: ()
       <div className="stack-sm">
         {err && <div className="notice err">{err}</div>}
         <AppKeys appId={appId} onDeleted={onAppDeleted} />
+        <AppSigning appId={appId} />
         <BoardCreator appId={appId} onCreated={loadBoards} />
         <BoardList boards={boards} active={board} onPick={setBoard} />
       </div>
@@ -307,6 +308,97 @@ function AppKeys({ appId, onDeleted }: { appId: string; onDeleted: () => void })
             } catch (e) {
               setErr((e as ApiError).message);
             }
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function AppSigning({ appId }: { appId: string }) {
+  const [st, setSt] = useState<SigningState | null>(null);
+  const [reveal, setReveal] = useState(false);
+  const [err, setErr] = useState("");
+  const [confirmRotate, setConfirmRotate] = useState(false);
+
+  async function load() {
+    try {
+      setSt(await api.getSigning(appId));
+    } catch (e) {
+      setErr((e as ApiError).message);
+    }
+  }
+  useEffect(() => {
+    setReveal(false);
+    setErr("");
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId]);
+
+  async function toggle(v: boolean) {
+    try {
+      setSt(await api.setSigning(appId, v));
+      setErr("");
+    } catch (e) {
+      setErr((e as ApiError).message);
+    }
+  }
+  async function rotate() {
+    try {
+      setSt(await api.rotateSigning(appId));
+      setReveal(true);
+      setErr("");
+    } catch (e) {
+      setErr((e as ApiError).message);
+    }
+  }
+
+  if (!st) return null;
+
+  return (
+    <>
+      <div className="panel">
+        <div className="spread" style={{ marginBottom: 12 }}>
+          <span className="eyebrow">SIGNED SUBMISSIONS</span>
+        </div>
+        {err && <div className="notice err">{err}</div>}
+        {!st.available ? (
+          <p className="dim" style={{ fontSize: 13 }}>
+            Signed submissions aren’t enabled on this server — scores are authenticated by your API key.
+          </p>
+        ) : (
+          <>
+            <p className="dim" style={{ fontSize: 13, marginBottom: 10 }}>
+              Require game clients to HMAC-sign each submission (anti-cheat). Sign with the app secret below; keep it server-side — never ship it in a public client build.
+            </p>
+            <label className="spread" style={{ fontSize: 14, marginBottom: 12, cursor: "pointer" }}>
+              <span>Require signed submissions</span>
+              <input type="checkbox" checked={st.require_signing} onChange={(e) => void toggle(e.target.checked)} />
+            </label>
+            <div className="spread" style={{ fontSize: 13, marginBottom: 8 }}>
+              <span className="dim">Signing secret · v{st.version}</span>
+              <div className="row" style={{ gap: 8 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setReveal((r) => !r)}>{reveal ? "Hide" : "Reveal"}</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => st.secret && void navigator.clipboard?.writeText(st.secret)}>Copy</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setConfirmRotate(true)}>Rotate</button>
+              </div>
+            </div>
+            {reveal && st.secret && (
+              <code className="muted-code" style={{ display: "block", wordBreak: "break-all" }}>{st.secret}</code>
+            )}
+          </>
+        )}
+      </div>
+      {confirmRotate && (
+        <ConfirmDialog
+          title="Rotate signing secret?"
+          body="The current secret stops working immediately. Update your game's backend with the new secret to keep signed submissions flowing."
+          confirmLabel="Rotate secret"
+          danger
+          onCancel={() => setConfirmRotate(false)}
+          onConfirm={async () => {
+            setConfirmRotate(false);
+            await rotate();
           }}
         />
       )}

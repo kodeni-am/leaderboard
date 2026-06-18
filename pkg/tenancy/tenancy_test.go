@@ -112,6 +112,31 @@ func storeContract(t *testing.T, s Store) {
 		t.Errorf("revoke unknown key: %v", err)
 	}
 
+	// --- per-app signing settings ---
+	if app.SigningKeyVersion != 1 {
+		t.Errorf("new app SigningKeyVersion=%d, want 1", app.SigningKeyVersion)
+	}
+	if app.RequireSigning {
+		t.Error("new app should not require signing by default")
+	}
+	enabled, err := s.SetRequireSigning(ctx, app.ID, true)
+	if err != nil || !enabled.RequireSigning {
+		t.Fatalf("SetRequireSigning(true): %+v / %v", enabled, err)
+	}
+	if reloaded, _ := s.GetApp(ctx, app.ID); !reloaded.RequireSigning {
+		t.Error("RequireSigning did not persist")
+	}
+	rotated, err := s.RotateSigningKey(ctx, app.ID)
+	if err != nil || rotated.SigningKeyVersion != 2 {
+		t.Fatalf("RotateSigningKey: version=%d err=%v, want 2", rotated.SigningKeyVersion, err)
+	}
+	if off, err := s.SetRequireSigning(ctx, app.ID, false); err != nil || off.RequireSigning {
+		t.Fatalf("SetRequireSigning(false): %+v / %v", off, err)
+	}
+	if _, err := s.SetRequireSigning(ctx, "app_nope", true); !errors.Is(err, ErrAppNotFound) {
+		t.Errorf("SetRequireSigning unknown app: %v", err)
+	}
+
 	// --- delete app: app, keys, and boards are all removed ---
 	if err := s.DeleteApp(ctx, app.ID); err != nil {
 		t.Fatal(err)
