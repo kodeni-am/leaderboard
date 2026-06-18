@@ -47,8 +47,12 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-no-reply@example.com}
-    expose:
-      - "8080"
+    # Runnable injects $PORT (a free host port) and proxies the domain to it, so
+    # publish the container's 8080 to $PORT. It then runs
+    # `docker compose port leaderboardd 8080` to find the mapping. Do NOT
+    # hardcode a fixed host port (e.g. "8080:8080").
+    ports:
+      - "${PORT:-8080}:8080"
     depends_on:
       - redis
     restart: unless-stopped
