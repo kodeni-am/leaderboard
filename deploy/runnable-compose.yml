@@ -24,6 +24,10 @@ services:
     restart: unless-stopped
 
   leaderboardd:
+    # Runnable builds this from the repo (it runs `docker compose up --build`).
+    # To deploy a prebuilt image instead (faster, no host build), replace the
+    # `build:` block with the published GHCR image:
+    #   image: ghcr.io/kodeni-am/leaderboard:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile
