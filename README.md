@@ -252,6 +252,25 @@ docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --
   `deploy/alertmanager.yml` at your Slack/PagerDuty/webhook to get notified.
   Reach Grafana over an SSH tunnel: `ssh -L 3000:localhost:3000 user@host`.
 
+## Deploy on Runnable (or any compose host)
+
+The image serves the **dashboard SPA and the API on one origin** (`WEB_DIR=/web`,
+baked in by the multi-stage `deploy/Dockerfile`), so a single web service is all
+you need. `deploy/runnable-compose.yml` defines that service plus a persistent
+Redis.
+
+In Runnable: connect the repo, enable **compose mode** with
+`composeFile: deploy/runnable-compose.yml` and **`composeService: leaderboardd`**
+(port 8080). Runnable provides the domain, TLS, and reverse proxy. Set env:
+
+- `PUBLIC_URL` — the app's public URL (used in account email links)
+- `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` — for
+  verification / reset email (required for signups)
+- `SIGNING_SECRET` — optional HMAC anti-cheat
+
+`SECURE_COOKIES` is already `true` and `REDIS_ADDR=redis:6379` is wired. Pushes
+to the repo auto-deploy.
+
 ## Deploying to AWS
 
 `deploy/terraform` provisions ElastiCache (ranking tier), Kinesis (durable log),
