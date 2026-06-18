@@ -46,6 +46,15 @@ export interface BoardDef {
   updatePolicy?: "best" | "last" | "increment";
   tieBreak?: "lexical" | "firstToReach";
   windows?: WindowDef[];
+  /**
+   * Enable the approximate-rank tier (a score histogram) so {@link
+   * LeaderboardClient.getApproxRank} can estimate rank in O(buckets) on very
+   * large boards. Requires `approxMax > approxMin`; `approxBuckets` defaults to 1024.
+   */
+  approxRank?: boolean;
+  approxMin?: number;
+  approxMax?: number;
+  approxBuckets?: number;
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -103,6 +112,10 @@ export class LeaderboardClient {
       update_policy: def.updatePolicy,
       tie_break: def.tieBreak,
       windows: def.windows?.map((w) => ({ kind: w.kind, custom_id: w.customId })),
+      approx_rank: def.approxRank,
+      approx_min: def.approxMin,
+      approx_max: def.approxMax,
+      approx_buckets: def.approxBuckets,
     });
   }
 
@@ -130,9 +143,19 @@ export class LeaderboardClient {
     return { accepted: !!r.accepted, duplicate: !!r.duplicate };
   }
 
-  /** A member's rank. Throws {@link NotFoundError} if absent. */
+  /** A member's exact rank (O(log N)). Throws {@link NotFoundError} if absent. */
   async getRank(board: string, member: string, q: QueryOpts = {}): Promise<RankEntry> {
     return this.send("GET", `/v1/boards/${enc(board)}/rank${qs({ member, ...q })}`);
+  }
+
+  /**
+   * A member's approximate rank from the board's score histogram (O(buckets),
+   * `exact: false`). The board must be created with `approxRank: true`; on very
+   * large boards this avoids the cost of an exact rank scan. Throws
+   * {@link NotFoundError} if the member is absent.
+   */
+  async getApproxRank(board: string, member: string, q: QueryOpts = {}): Promise<RankEntry> {
+    return this.send("GET", `/v1/boards/${enc(board)}/rank${qs({ member, approx: "true", ...q })}`);
   }
 
   /** Top N entries (rank 1..N). */

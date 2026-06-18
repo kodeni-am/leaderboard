@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,29 +32,60 @@ func getenv(key, def string) string {
 	return def
 }
 
+// splitAddrs parses a single host:port or a comma-separated list of them,
+// trimming whitespace and dropping blanks. More than one address makes
+// go-redis use its cluster client.
+func splitAddrs(s string) []string {
+	parts := strings.Split(s, ",")
+	out := parts[:0]
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func main() {
 	var (
-		redisAddr  = getenv("REDIS_ADDR", "localhost:6379")
-		listenAddr = getenv("LISTEN_ADDR", ":8080")
-		logBackend = getenv("LB_LOG_BACKEND", "redis") // redis | mem
-		stream     = getenv("LB_STREAM", "lb:ingest")
-		signingKey = os.Getenv("SIGNING_SECRET")
-		partitions = intEnv("INGEST_PARTITIONS", 16)
-		workerIdx  = intEnv("WORKER_INDEX", 0)
-		workerCnt  = intEnv("WORKER_COUNT", 1)
-		publicURL  = getenv("PUBLIC_URL", "http://localhost:8080")
-		secureCk   = os.Getenv("SECURE_COOKIES") == "true"
+		redisAddr   = getenv("REDIS_ADDR", "localhost:6379")
+		listenAddr  = getenv("LISTEN_ADDR", ":8080")
+		logBackend  = getenv("LB_LOG_BACKEND", "redis") // redis | mem
+		stream      = getenv("LB_STREAM", "lb:ingest")
+		signingKey  = os.Getenv("SIGNING_SECRET")
+		partitions  = intEnv("INGEST_PARTITIONS", 16)
+		workerIdx   = intEnv("WORKER_INDEX", 0)
+		workerCnt   = intEnv("WORKER_COUNT", 1)
+		boardShards = intEnv("BOARD_SHARDS", 1)
+		publicURL   = getenv("PUBLIC_URL", "http://localhost:8080")
+		secureCk    = os.Getenv("SECURE_COOKIES") == "true"
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	rdb := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: []string{redisAddr}})
+	// REDIS_ADDR may be a single host:port or a comma-separated list of cluster
+	// seed nodes. With more than one address, NewUniversalClient returns a
+	// ClusterClient; with one, a plain client. The engine's per-board hash tags
+	// and the per-stream ingest reads keep every command on a single slot, so
+	// both paths work without code changes.
+	redisAddrs := splitAddrs(redisAddr)
+	rdb := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: redisAddrs})
 	if err := waitForRedis(ctx, rdb); err != nil {
 		log.Fatalf("redis unavailable at %s: %v", redisAddr, err)
 	}
 
-	eng := engine.NewRedisEngine(rdb)
+	// BOARD_SHARDS > 1 splits each board across that many sorted sets (intra-board
+	// sharding) so one board can exceed a single node. The default (1) uses the
+	// plain single-set engine with unchanged key names. Both satisfy
+	// engine.RankingEngine, so the consumer, API, and reaper are unaffected.
+	var eng engine.RankingEngine
+	if boardShards > 1 {
+		eng = engine.NewShardedEngine(rdb, boardShards)
+		log.Printf("intra-board sharding: %d shards/board (rank reads are approximate)", boardShards)
+	} else {
+		eng = engine.NewRedisEngine(rdb)
+	}
 	store := tenancy.NewRedisStore(rdb)
 	registry := ingest.NewStaticRegistry()
 

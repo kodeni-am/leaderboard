@@ -56,6 +56,9 @@ type RankingEngine interface {
 	Submit(ctx context.Context, b Board, member string, score float64, t time.Time) (SubmitResult, error)
 	SubmitBatch(ctx context.Context, ops []SubmitOp) ([]SubmitResult, error)
 	GetRank(ctx context.Context, b Board, member string) (RankEntry, error)
+	// GetApproxRank estimates a member's rank from the board's score histogram
+	// (Exact=false). Returns ErrApproxDisabled unless the board enables it.
+	GetApproxRank(ctx context.Context, b Board, member string) (RankEntry, error)
 	TopN(ctx context.Context, b Board, n int) ([]RankEntry, error)
 	Page(ctx context.Context, b Board, offset, limit int) ([]RankEntry, error)
 	Neighbors(ctx context.Context, b Board, member string, k int) ([]RankEntry, error)

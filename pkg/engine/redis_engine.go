@@ -30,6 +30,7 @@ type submitCmds struct {
 	ch     *redis.IntCmd   // best/last: number of changed elements
 	score  *redis.FloatCmd // best/last: authoritative current stored value
 	inc    *redis.FloatCmd // increment: new score
+	pre    *redis.FloatCmd // approx: stored value BEFORE this write (Nil if new)
 }
 
 func (sc submitCmds) result() (SubmitResult, error) {
@@ -55,6 +56,12 @@ func queueSubmit(ctx context.Context, pipe redis.Pipeliner, op SubmitOp, enc flo
 	cfg := op.Board.Config.withDefaults()
 	key := op.Board.Key.zKey()
 	sc := submitCmds{policy: cfg.UpdatePolicy, codec: newScoreCodec(cfg)}
+	// For approx boards, capture the pre-write stored value so we can move the
+	// member between histogram buckets. Pipelines preserve order, so this reads
+	// the state before the ZADD/ZINCRBY queued below.
+	if cfg.ApproxRank {
+		sc.pre = pipe.ZScore(ctx, key, op.Member)
+	}
 	switch cfg.UpdatePolicy {
 	case UpdateIncrement:
 		sc.inc = pipe.ZIncrBy(ctx, key, op.Score, op.Member)
@@ -114,7 +121,49 @@ func (e *RedisEngine) SubmitBatch(ctx context.Context, ops []SubmitOp) ([]Submit
 		}
 		results[i] = r
 	}
+	if err := e.maintainHistograms(ctx, ops, cmds, results); err != nil {
+		return nil, err
+	}
 	return results, nil
+}
+
+// maintainHistograms moves each approx-board member between histogram buckets to
+// reflect the write just applied, in a single follow-up pipeline. Accuracy
+// assumes per-member writes are serialized (the ingest log partitions by member,
+// so a member's events always flow through one consumer) — concurrent writes to
+// the same member from different callers can drift the approximate counts.
+func (e *RedisEngine) maintainHistograms(ctx context.Context, ops []SubmitOp, cmds []submitCmds, results []SubmitResult) error {
+	pipe := e.rdb.Pipeline()
+	queued := false
+	for i, op := range ops {
+		if cmds[i].pre == nil { // not an approx board
+			continue
+		}
+		h := boardHistogram(e.rdb, op.Board)
+		newPrimary := results[i].Score
+		prev, err := cmds[i].pre.Result()
+		if err == redis.Nil {
+			// New member: count it once.
+			h.QueueDelta(ctx, pipe, newPrimary, +1)
+			queued = true
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		oldPrimary := cmds[i].codec.decode(prev)
+		if oldPrimary == newPrimary {
+			continue // score unchanged (e.g. a non-improving `best` write)
+		}
+		h.QueueDelta(ctx, pipe, oldPrimary, -1)
+		h.QueueDelta(ctx, pipe, newPrimary, +1)
+		queued = true
+	}
+	if !queued {
+		return nil
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 // GetRank returns the member's exact 1-based rank and decoded score.
@@ -155,6 +204,41 @@ func (e *RedisEngine) GetRank(ctx context.Context, b Board, member string) (Rank
 		Rank:   rank + 1,
 		Exact:  true,
 	}, nil
+}
+
+// GetApproxRank estimates the member's global rank from the board's score
+// histogram in O(buckets), without a ZRANK. The returned entry has Exact=false
+// and a Rank accurate to one bucket width. It exists so the sharded engine can
+// answer global rank without scatter-gathering every shard; on a single set,
+// prefer GetRank (exact and already O(log N)). Returns ErrApproxDisabled if the
+// board does not have ApproxRank configured.
+func (e *RedisEngine) GetApproxRank(ctx context.Context, b Board, member string) (RankEntry, error) {
+	if err := b.validate(); err != nil {
+		return RankEntry{}, err
+	}
+	cfg := b.Config.withDefaults()
+	if !cfg.ApproxRank {
+		return RankEntry{}, ErrApproxDisabled
+	}
+	stored, err := e.rdb.ZScore(ctx, b.Key.zKey(), member).Result()
+	if err == redis.Nil {
+		return RankEntry{}, ErrMemberNotFound
+	}
+	if err != nil {
+		return RankEntry{}, err
+	}
+	primary := newScoreCodec(cfg).decode(stored)
+	h := boardHistogram(e.rdb, b)
+	var rank int64
+	if cfg.SortOrder == SortAsc {
+		rank, err = h.ApproxRankAsc(ctx, primary)
+	} else {
+		rank, err = h.ApproxRankDesc(ctx, primary)
+	}
+	if err != nil {
+		return RankEntry{}, err
+	}
+	return RankEntry{Member: member, Score: primary, Rank: rank, Exact: false}, nil
 }
 
 // rangeByRank returns entries for the inclusive rank window [start, stop].
@@ -309,7 +393,31 @@ func (e *RedisEngine) Remove(ctx context.Context, b Board, member string) error 
 	if err := b.Key.validate(); err != nil {
 		return err
 	}
-	return e.rdb.ZRem(ctx, b.Key.zKey(), member).Err()
+	cfg := b.Config.withDefaults()
+	if !cfg.ApproxRank {
+		return e.rdb.ZRem(ctx, b.Key.zKey(), member).Err()
+	}
+	// Approx board: decrement the member's histogram bucket if it was present.
+	// ZScore before ZRem (pipeline order) gives the value being removed.
+	pipe := e.rdb.Pipeline()
+	scoreCmd := pipe.ZScore(ctx, b.Key.zKey(), member)
+	remCmd := pipe.ZRem(ctx, b.Key.zKey(), member)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return err
+	}
+	removed, err := remCmd.Result()
+	if err != nil {
+		return err
+	}
+	stored, err := scoreCmd.Result()
+	if err == redis.Nil || removed == 0 {
+		return nil // member wasn't on the board; nothing to decrement
+	}
+	if err != nil {
+		return err
+	}
+	primary := newScoreCodec(cfg).decode(stored)
+	return boardHistogram(e.rdb, b).Remove(ctx, primary)
 }
 
 // Reset deletes the board entirely (used for window rollover).

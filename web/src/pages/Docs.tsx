@@ -74,7 +74,7 @@ const top = await lb.getTop("high_scores", 10);`}</Code>
               <li><b>Segments</b> — slice a board by region, platform, or any cohort key you pass at submit time (e.g. <span className="mono">region=eu</span>).</li>
               <li><b>Friends &amp; neighbors</b> — rank a specific set of members against each other, or fetch the players just above and below a given player.</li>
               <li><b>Write-behind</b> — submits are durably logged and ranked asynchronously (typically within milliseconds), so writes stay fast and bursts are absorbed.</li>
-              <li><b>Scale</b> — rank reads stay O(log N) at any size. For very large boards, deep-tail rank may be approximate while top-N and “me ± neighbors” remain exact (the response’s <span className="muted-code">exact</span> flag tells you which).</li>
+              <li><b>Scale</b> — rank reads stay O(log N) at any size. For very large boards you can enable an <b>approximate-rank tier</b>: create the board with <span className="muted-code">approx_rank: true</span> (plus an <span className="muted-code">approx_min</span>/<span className="muted-code">approx_max</span> score range) and read with <span className="muted-code">?approx=true</span> to get an O(buckets) estimate. The response’s <span className="muted-code">exact</span> flag tells you whether a rank is exact or estimated.</li>
             </ul>
           </section>
 
@@ -96,7 +96,7 @@ X-API-Key: lb_your_api_key`}</Code>
                 {[
                   ["POST /v1/boards", "Define a board"],
                   ["POST /v1/boards/{board}/scores", "Submit a score (write-behind)"],
-                  ["GET /v1/boards/{board}/rank?member=", "A member's rank"],
+                  ["GET /v1/boards/{board}/rank?member=", "A member's rank (add &approx=true for the histogram estimate)"],
                   ["GET /v1/boards/{board}/top?n=", "Top N"],
                   ["GET /v1/boards/{board}/page?offset=&limit=", "Paginate"],
                   ["GET /v1/boards/{board}/neighbors?member=&k=", "Me ± k"],

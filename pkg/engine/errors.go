@@ -21,4 +21,8 @@ var (
 	// ErrInvalidConfig is returned when a BoardConfig combination is not
 	// supported (e.g. UpdatePolicy=increment with TieBreak=firstToReach).
 	ErrInvalidConfig = errors.New("engine: invalid board config")
+
+	// ErrApproxDisabled is returned by GetApproxRank when the board's config does
+	// not enable the approximate-rank tier (ApproxRank=false).
+	ErrApproxDisabled = errors.New("engine: approximate rank not enabled for board")
 )

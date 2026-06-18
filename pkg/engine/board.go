@@ -59,6 +59,21 @@ type BoardConfig struct {
 	// Epoch is the base time for firstToReach timestamp encoding. Zero value
 	// means 2020-01-01 UTC.
 	Epoch time.Time `json:"epoch,omitempty"`
+
+	// ApproxRank enables the approximate-rank read tier: on every write the
+	// engine maintains a fixed-bucket score histogram (the board's :h key) so a
+	// member's global rank can be estimated in O(buckets) without scanning the
+	// set. It is the building block the sharded engine uses for global rank
+	// across shards; on a single set it is opt-in (GetRank stays exact and
+	// O(log N)). Requires ApproxMax > ApproxMin.
+	ApproxRank bool `json:"approx_rank,omitempty"`
+	// ApproxMin and ApproxMax bound the primary-score range the histogram
+	// buckets span. Scores outside the range clamp to the edge buckets.
+	ApproxMin float64 `json:"approx_min,omitempty"`
+	ApproxMax float64 `json:"approx_max,omitempty"`
+	// ApproxBuckets is the number of equal-width histogram bins; rank resolution
+	// is one bucket width. Default 1024.
+	ApproxBuckets int `json:"approx_buckets,omitempty"`
 }
 
 // withDefaults returns a copy with zero-value fields filled in.
@@ -77,6 +92,9 @@ func (c BoardConfig) withDefaults() BoardConfig {
 	}
 	if c.Epoch.IsZero() {
 		c.Epoch = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	}
+	if c.ApproxRank && c.ApproxBuckets == 0 {
+		c.ApproxBuckets = 1024
 	}
 	return c
 }
@@ -103,6 +121,14 @@ func (c BoardConfig) validate() error {
 	}
 	if cc.TieBreak == TieFirstToReach && (cc.ScoreBits < 1 || cc.ScoreBits > 52) {
 		return fmt.Errorf("%w: scoreBits must be 1..52, got %d", ErrInvalidConfig, cc.ScoreBits)
+	}
+	if cc.ApproxRank {
+		if !(cc.ApproxMax > cc.ApproxMin) {
+			return fmt.Errorf("%w: approxRank requires approxMax > approxMin (got min=%v max=%v)", ErrInvalidConfig, cc.ApproxMin, cc.ApproxMax)
+		}
+		if cc.ApproxBuckets < 1 {
+			return fmt.Errorf("%w: approxBuckets must be >= 1, got %d", ErrInvalidConfig, cc.ApproxBuckets)
+		}
 	}
 	return nil
 }

@@ -1,0 +1,84 @@
+# Local Redis Cluster for testing the cluster-safe ingest path.
+#
+# Brings up a 6-node cluster (3 masters + 3 replicas), forms it with one
+# redis-cli --cluster create, then runs the Go suite against it. The partition
+# streams lb:ingest:<p> hash to different slots, so this is what proves the
+# per-stream consumer reads don't trip CROSSSLOT.
+#
+# Usage (from the repo root):
+#   docker compose -f deploy/docker-compose.cluster.yml up --build \
+#     --abort-on-container-exit --exit-code-from clustertest
+#   docker compose -f deploy/docker-compose.cluster.yml down -v
+#
+# The nodes announce their in-network container IPs, so clients on this compose
+# network (the clustertest service) follow MOVED redirects fine. This file is
+# test infrastructure — production clusters are managed by your platform
+# (ElastiCache, a Helm chart, etc.), see deploy/README-cluster.md.
+
+x-node: &node
+  image: redis:7-alpine
+  command:
+    - redis-server
+    - --port
+    - "6379"
+    - --cluster-enabled
+    - "yes"
+    - --cluster-config-file
+    - nodes.conf
+    - --cluster-node-timeout
+    - "5000"
+    - --appendonly
+    - "no"
+    - --save
+    - ""
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 2s
+    timeout: 2s
+    retries: 15
+
+services:
+  redis-c0: { <<: *node }
+  redis-c1: { <<: *node }
+  redis-c2: { <<: *node }
+  redis-c3: { <<: *node }
+  redis-c4: { <<: *node }
+  redis-c5: { <<: *node }
+
+  # One-shot: form the cluster once all six nodes answer PING.
+  cluster-init:
+    image: redis:7-alpine
+    command:
+      - sh
+      - -c
+      - >
+        redis-cli --cluster create
+        redis-c0:6379 redis-c1:6379 redis-c2:6379
+        redis-c3:6379 redis-c4:6379 redis-c5:6379
+        --cluster-replicas 1 --cluster-yes
+    depends_on:
+      redis-c0: { condition: service_healthy }
+      redis-c1: { condition: service_healthy }
+      redis-c2: { condition: service_healthy }
+      redis-c3: { condition: service_healthy }
+      redis-c4: { condition: service_healthy }
+      redis-c5: { condition: service_healthy }
+
+  # Runs the cluster smoke test against the freshly formed cluster.
+  clustertest:
+    image: golang:1.23
+    working_dir: /src
+    volumes:
+      - ..:/src
+      - gomod:/go/pkg/mod
+      - gobuild:/root/.cache/go-build
+    environment:
+      GOFLAGS: -buildvcs=false
+      REDIS_CLUSTER_ADDRS: redis-c0:6379,redis-c1:6379,redis-c2:6379,redis-c3:6379,redis-c4:6379,redis-c5:6379
+    command: ["go", "test", "./pkg/ingest/", "-run", "TestClusterIngestNoCrossSlot", "-v", "-count=1"]
+    depends_on:
+      cluster-init: { condition: service_completed_successfully }
+
+volumes:
+  gomod:
+  gobuild:

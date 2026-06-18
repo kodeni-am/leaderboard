@@ -174,41 +174,40 @@ func (g *GroupConsumer) apply(ctx context.Context, stream string, msgs []redis.X
 // Step reads new entries from all owned partitions (one blocking XREADGROUP),
 // applies and ACKs them. Returns the number of records processed.
 func (g *GroupConsumer) Step(ctx context.Context) (int, error) {
-	if len(g.owned) == 0 {
-		return 0, nil
-	}
-	streams := make([]string, 0, len(g.owned)*2)
-	for _, p := range g.owned {
-		streams = append(streams, g.log.StreamName(p))
-	}
-	for range g.owned {
-		streams = append(streams, ">")
-	}
-	res, err := g.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
-		Group:    g.group,
-		Consumer: g.consumer,
-		Streams:  streams,
-		Count:    g.batch,
-		Block:    g.block,
-	}).Result()
-	if err == redis.Nil {
-		return 0, nil // nothing arrived within the block window
-	}
-	if isNoGroup(err) {
-		// Streams/groups vanished (e.g. Redis restart/flush, or a freshly added
-		// partition). Recreate and pick up on the next tick instead of dying.
-		return 0, g.EnsureGroups(ctx)
-	}
-	if err != nil {
-		return 0, err
-	}
 	total := 0
-	for _, st := range res {
-		n, err := g.apply(ctx, st.Stream, st.Messages)
+	// Read each owned partition's stream individually (non-blocking). One stream
+	// per XREADGROUP keeps the command to a single key/slot, which is required on
+	// Redis Cluster (a multi-stream read spans slots → CROSSSLOT). Run() polls
+	// when idle, so we don't need server-side BLOCK here.
+	for _, p := range g.owned {
+		stream := g.log.StreamName(p)
+		res, err := g.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+			Group:    g.group,
+			Consumer: g.consumer,
+			Streams:  []string{stream, ">"},
+			Count:    g.batch,
+			Block:    -1, // non-blocking
+		}).Result()
+		if err == redis.Nil {
+			continue
+		}
+		if isNoGroup(err) {
+			// Stream/group vanished (Redis flush/restart, or a fresh partition).
+			if e := g.EnsureGroups(ctx); e != nil {
+				return total, e
+			}
+			continue
+		}
 		if err != nil {
 			return total, err
 		}
-		total += n
+		for _, st := range res {
+			n, err := g.apply(ctx, st.Stream, st.Messages)
+			if err != nil {
+				return total, err
+			}
+			total += n
+		}
 	}
 	return total, nil
 }
@@ -263,11 +262,16 @@ func (g *GroupConsumer) Run(ctx context.Context, claimInterval time.Duration) er
 	}
 	ticker := time.NewTicker(claimInterval)
 	defer ticker.Stop()
+	poll := g.block // reuse the configured interval as the idle poll period
+	if poll <= 0 {
+		poll = 250 * time.Millisecond
+	}
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if _, err := g.Step(ctx); err != nil {
+		n, err := g.Step(ctx)
+		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -281,6 +285,15 @@ func (g *GroupConsumer) Run(ctx context.Context, claimInterval time.Duration) er
 				return err
 			}
 		default:
+		}
+		// Step is non-blocking; sleep briefly when there was nothing to do so we
+		// don't busy-loop. New entries are picked up within `poll`.
+		if n == 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(poll):
+			}
 		}
 	}
 }

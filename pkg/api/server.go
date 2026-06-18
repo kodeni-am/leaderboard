@@ -211,6 +211,12 @@ type createBoardReq struct {
 	TieBreak     string      `json:"tie_break,omitempty"`
 	ScoreBits    uint        `json:"score_bits,omitempty"`
 	Windows      []windowReq `json:"windows,omitempty"`
+	// Opt-in approximate-rank tier (for very large boards). Requires
+	// ApproxMax > ApproxMin; ApproxBuckets defaults to 1024.
+	ApproxRank    bool    `json:"approx_rank,omitempty"`
+	ApproxMin     float64 `json:"approx_min,omitempty"`
+	ApproxMax     float64 `json:"approx_max,omitempty"`
+	ApproxBuckets int     `json:"approx_buckets,omitempty"`
 }
 
 func (s *Server) handleCreateBoard(w http.ResponseWriter, r *http.Request) {
@@ -221,10 +227,14 @@ func (s *Server) handleCreateBoard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := engine.BoardConfig{
-		SortOrder:    engine.SortOrder(req.SortOrder),
-		UpdatePolicy: engine.UpdatePolicy(req.UpdatePolicy),
-		TieBreak:     engine.TieBreak(req.TieBreak),
-		ScoreBits:    req.ScoreBits,
+		SortOrder:     engine.SortOrder(req.SortOrder),
+		UpdatePolicy:  engine.UpdatePolicy(req.UpdatePolicy),
+		TieBreak:      engine.TieBreak(req.TieBreak),
+		ScoreBits:     req.ScoreBits,
+		ApproxRank:    req.ApproxRank,
+		ApproxMin:     req.ApproxMin,
+		ApproxMax:     req.ApproxMax,
+		ApproxBuckets: req.ApproxBuckets,
 	}
 	if err := cfg.Validate(); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
@@ -326,7 +336,19 @@ func (s *Server) handleRank(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "member required")
 		return
 	}
-	entry, err := s.eng.GetRank(r.Context(), b, member)
+	// ?approx=true uses the histogram tier (O(buckets), Exact=false) when the
+	// board enables it; otherwise the exact O(log N) rank.
+	var entry engine.RankEntry
+	var err error
+	if r.URL.Query().Get("approx") == "true" {
+		entry, err = s.eng.GetApproxRank(r.Context(), b, member)
+		if errors.Is(err, engine.ErrApproxDisabled) {
+			writeErr(w, http.StatusBadRequest, "approximate rank not enabled for this board")
+			return
+		}
+	} else {
+		entry, err = s.eng.GetRank(r.Context(), b, member)
+	}
 	if errors.Is(err, engine.ErrMemberNotFound) {
 		writeErr(w, http.StatusNotFound, "member not found")
 		return

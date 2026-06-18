@@ -142,10 +142,23 @@ func (c *Client) Submit(ctx context.Context, board string, sub Submission) (acce
 	return out.Accepted, nil
 }
 
-// GetRank returns a member's rank. Returns ErrNotFound if absent.
+// GetRank returns a member's exact rank. Returns ErrNotFound if absent.
 func (c *Client) GetRank(ctx context.Context, board, member string, opts QueryOpts) (Entry, error) {
 	v := opts.values()
 	v.Set("member", member)
+	var e Entry
+	_, err := c.do(ctx, http.MethodGet, "/v1/boards/"+url.PathEscape(board)+"/rank?"+v.Encode(), nil, &e)
+	return e, err
+}
+
+// GetApproxRank returns a member's approximate rank from the board's score
+// histogram (the returned Entry has Exact=false). The board must be created with
+// ApproxRank enabled; on very large boards this avoids an exact rank scan.
+// Returns ErrNotFound if the member is absent.
+func (c *Client) GetApproxRank(ctx context.Context, board, member string, opts QueryOpts) (Entry, error) {
+	v := opts.values()
+	v.Set("member", member)
+	v.Set("approx", "true")
 	var e Entry
 	_, err := c.do(ctx, http.MethodGet, "/v1/boards/"+url.PathEscape(board)+"/rank?"+v.Encode(), nil, &e)
 	return e, err

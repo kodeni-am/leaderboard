@@ -323,6 +323,50 @@ func TestKeyManagement(t *testing.T) {
 	}
 }
 
+func TestApproxRankEndpoint(t *testing.T) {
+	h := newHarness(t)
+	h.onboard(t, "approx@example.com")
+	t.Cleanup(func() {
+		_ = h.eng.Reset(context.Background(), engine.Board{Key: engine.BoardKey{App: h.appID, Board: "big", Segment: "all", Window: "all"}})
+		_ = h.eng.Reset(context.Background(), engine.Board{Key: engine.BoardKey{App: h.appID, Board: "plain", Segment: "all", Window: "all"}})
+	})
+
+	// Create an approx-enabled board.
+	if resp, body := h.call(t, http.MethodPost, "/v1/boards", h.key(), map[string]any{
+		"board": "big", "approx_rank": true, "approx_min": 0, "approx_max": 1000, "approx_buckets": 1000,
+	}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create approx board: %d %s", resp.StatusCode, body)
+	}
+	for _, s := range []struct {
+		m string
+		v float64
+	}{{"alice", 300}, {"bob", 500}, {"carol", 100}} {
+		if resp, body := h.call(t, http.MethodPost, "/v1/boards/big/scores", h.key(), map[string]any{"member": s.m, "score": s.v}); resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("submit %s: %d %s", s.m, resp.StatusCode, body)
+		}
+	}
+	if err := h.cons.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Approximate read: bob (500) is rank 1, flagged inexact.
+	resp, body := h.call(t, http.MethodGet, "/v1/boards/big/rank?member=bob&approx=true", h.key(), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("approx rank: %d %s", resp.StatusCode, body)
+	}
+	var entry engine.RankEntry
+	json.Unmarshal(body, &entry)
+	if entry.Rank != 1 || entry.Exact {
+		t.Errorf("approx bob: %+v (want rank 1, exact=false)", entry)
+	}
+
+	// approx=true on a board without the tier -> 400.
+	h.call(t, http.MethodPost, "/v1/boards", h.key(), map[string]any{"board": "plain"})
+	if resp, _ := h.call(t, http.MethodGet, "/v1/boards/plain/rank?member=x&approx=true", h.key(), nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("approx on plain board: got %d, want 400", resp.StatusCode)
+	}
+}
+
 func TestMetricsEndpoint(t *testing.T) {
 	h := newHarness(t)
 	h.onboard(t, "metrics@example.com")

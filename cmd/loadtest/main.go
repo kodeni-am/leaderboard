@@ -9,6 +9,11 @@
 //	loadtest -mode engine -redis localhost:6379 -sizes 1000,100000,1000000 \
 //	         -readers 8 -writers 8 -dur 5s
 //
+// Add -shards N (>1) to benchmark the intra-board sharded engine instead of a
+// single sorted set (rank reads then use the approximate histogram tier):
+//
+//	loadtest -mode engine -redis localhost:6379 -shards 8 -sizes 1000000 -dur 5s
+//
 // HTTP mode (full stack: API + ingest + consumer):
 //
 //	loadtest -mode http -url http://localhost:8080 -api-key lb_yourkey \
@@ -44,11 +49,12 @@ func main() {
 	readers := flag.Int("readers", 8, "concurrent reader goroutines")
 	writers := flag.Int("writers", 8, "concurrent writer goroutines")
 	durFlag := flag.Duration("dur", 5*time.Second, "duration of each measurement phase")
+	shards := flag.Int("shards", 1, "engine mode: intra-board shards (>1 benchmarks the ShardedEngine; rank reads become approximate)")
 	flag.Parse()
 
 	switch *mode {
 	case "engine":
-		runEngine(*redisAddr, parseSizes(*sizesStr), *readers, *writers, *durFlag)
+		runEngine(*redisAddr, parseSizes(*sizesStr), *readers, *writers, *durFlag, *shards)
 	case "http":
 		if *apiKey == "" {
 			log.Fatal("http mode requires -api-key (create an app in the dashboard)")
@@ -57,6 +63,18 @@ func main() {
 	default:
 		log.Fatalf("unknown mode %q (want engine|http)", *mode)
 	}
+}
+
+// splitAddrs parses a single host:port or a comma-separated cluster seed list.
+func splitAddrs(s string) []string {
+	parts := strings.Split(s, ",")
+	out := parts[:0]
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func parseSizes(s string) []int {
@@ -172,21 +190,32 @@ func us(d time.Duration) string { return fmt.Sprintf("%.0fµs", float64(d.Micros
 
 // ---------- engine mode ----------
 
-func runEngine(addr string, sizes []int, readers, writers int, dur time.Duration) {
+func runEngine(addr string, sizes []int, readers, writers int, dur time.Duration, shards int) {
 	ctx := context.Background()
-	rdb := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: []string{addr}, PoolSize: readers + writers + 4})
+	rdb := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: splitAddrs(addr), PoolSize: readers + writers + 4})
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		log.Fatalf("redis unavailable at %s: %v", addr, err)
 	}
-	eng := engine.NewRedisEngine(rdb)
+	// >1 shard benchmarks the sharded engine; its GetRank needs the approx tier,
+	// so enable a histogram spanning the random score range used below.
+	var eng engine.RankingEngine = engine.NewRedisEngine(rdb)
+	cfg := engine.BoardConfig{}
+	if shards > 1 {
+		eng = engine.NewShardedEngine(rdb, shards)
+		cfg = engine.BoardConfig{ApproxRank: true, ApproxMin: 0, ApproxMax: 10_000_000, ApproxBuckets: 2048}
+	}
 
-	fmt.Printf("OpenLeaderboard load test — ENGINE mode (Redis %s)\n", addr)
-	fmt.Printf("NOTE: numbers reflect THIS Redis/host; not a production ElastiCache benchmark.\n\n")
+	fmt.Printf("OpenLeaderboard load test — ENGINE mode (Redis %s, shards=%d)\n", addr, shards)
+	fmt.Printf("NOTE: numbers reflect THIS Redis/host; not a production ElastiCache benchmark.\n")
+	if shards > 1 {
+		fmt.Printf("NOTE: sharded GetRank is APPROXIMATE (summed histograms across %d shards).\n", shards)
+	}
+	fmt.Println()
 	fmt.Printf("Read latency vs board size — GetRank, %d readers, %s each:\n", readers, dur)
 	fmt.Printf("  %-12s %-12s %-9s %-9s %-9s %-9s\n", "size", "reads/s", "p50", "p90", "p99", "max")
 
 	for _, size := range sizes {
-		board := engine.Board{Key: engine.BoardKey{App: "bench", Board: "b", Segment: "all", Window: "all"}}
+		board := engine.Board{Key: engine.BoardKey{App: "bench", Board: "b", Segment: "all", Window: "all"}, Config: cfg}
 		if err := eng.Reset(ctx, board); err != nil {
 			log.Fatalf("reset: %v", err)
 		}
@@ -216,7 +245,7 @@ func runEngine(addr string, sizes []int, readers, writers int, dur time.Duration
 
 	// Write throughput against the last (largest) board.
 	last := sizes[len(sizes)-1]
-	board := engine.Board{Key: engine.BoardKey{App: "bench", Board: "b", Segment: "all", Window: "all"}}
+	board := engine.Board{Key: engine.BoardKey{App: "bench", Board: "b", Segment: "all", Window: "all"}, Config: cfg}
 	fmt.Printf("\nWrite throughput — Submit (best-wins) into a %s-member board, %d writers, %s:\n", fmtThousands(last), writers, dur)
 	now := time.Now()
 	ops, errs, sorted := runConcurrent(dur, writers, func(rng *rand.Rand) error {
@@ -235,7 +264,7 @@ func runEngine(addr string, sizes []int, readers, writers int, dur time.Duration
 
 // seedBoard loads `size` distinct members with random scores using pipelined
 // engine submits.
-func seedBoard(ctx context.Context, eng *engine.RedisEngine, board engine.Board, size int) {
+func seedBoard(ctx context.Context, eng engine.RankingEngine, board engine.Board, size int) {
 	start := time.Now()
 	rng := rand.New(rand.NewSource(99))
 	const chunk = 5000

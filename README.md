@@ -146,7 +146,7 @@ All query endpoints accept `segment=` and `window=` (a literal id like
 
 | Var | Default | Notes |
 |---|---|---|
-| `REDIS_ADDR` | `localhost:6379` | Redis/ElastiCache endpoint |
+| `REDIS_ADDR` | `localhost:6379` | Redis/ElastiCache endpoint. Comma-separated seeds → [Redis Cluster](deploy/README-cluster.md) |
 | `LISTEN_ADDR` | `:8080` | HTTP listen address |
 | `LB_LOG_BACKEND` | `redis` | `redis` (Streams) or `mem` |
 | `LB_STREAM` | `lb:ingest` | Redis stream name |
@@ -158,6 +158,7 @@ All query endpoints accept `segment=` and `window=` (a literal id like
 | `INGEST_PARTITIONS` | `16` | Stream partitions (set once; changing it later rehashes routing) |
 | `WORKER_INDEX` | `0` | This worker's index for static partition ownership |
 | `WORKER_COUNT` | `1` | Total workers; each owns partitions where `p % count == index` |
+| `BOARD_SHARDS` | `1` | >1 enables [intra-board sharding](#sharding-one-board-across-nodes) (one board split across N sorted sets; rank reads become approximate) |
 
 ### Scaling consumers
 
@@ -179,6 +180,43 @@ residual: an `increment` board can over-count a single entry if a worker crashes
 in the narrow window between applying a batch and marking it — rare, and
 bounded to in-flight entries.
 
+### Scaling across nodes (Redis Cluster)
+
+When one node can't hold all your boards (or push their aggregate throughput),
+point `REDIS_ADDR` at comma-separated cluster seeds. Boards spread across nodes
+via per-board hash tags, and the consumer reads each partition stream on its own
+slot, so the same binary runs on single-node and cluster unchanged. Details,
+caveats, and a throwaway 6-node test cluster: **[deploy/README-cluster.md](deploy/README-cluster.md)**.
+
+### Sharding one board across nodes
+
+Redis Cluster spreads *different* boards across nodes, but a single board's
+sorted set still lives on one node. When one board outgrows a node, set
+`BOARD_SHARDS=N` to split it into N sorted sets (`board#s0…#s{N-1}`), each on its
+own hash slot. Members are assigned to a shard by a stable hash, so a member
+always lands on the same shard. What this costs and preserves:
+
+| Operation | Sharded behavior |
+|---|---|
+| submit / remove / count | exact — routed to the member's shard (count sums shards) |
+| top-N / page | **exact** — k-way merge of each shard's top range |
+| friends | exact — scores gathered across shards, ranked within the set |
+| rank | **approximate** (`exact:false`) — summed per-shard histograms; requires `approx_rank` on the board |
+| me ± neighbors | exact members/order in the window; rank numbers approximate |
+
+Because rank becomes approximate, sharded boards should be created with
+`approx_rank: true`. A board big enough to shard is past the point where an exact
+global rank scan is cheap, so this is the intended trade — top-N, pages, and
+neighbor lists stay exact.
+
+**Performance characteristic.** Sharding scales writes and memory across nodes
+(write throughput is unchanged from single-set) and keeps top-N/page/neighbors
+exact. Approximate rank, though, sums all shards' histograms per call, so a rank
+read costs roughly `O(shards × approx_buckets)` (one pipelined round trip,
+independent of member count). Fewer buckets → faster rank reads but coarser
+resolution; for rank-read-heavy workloads, cache the merged histogram. Measure
+your shard count and bucket size with `go run ./cmd/loadtest -mode engine -shards N`.
+
 ## Testing
 
 ```bash
@@ -199,6 +237,8 @@ set stops scaling.
 
 ```bash
 make loadtest                              # engine mode against the compose Redis
+# intra-board sharding (approximate rank tier):
+go run ./cmd/loadtest -mode engine -shards 8 -sizes 1000000 -dur 5s
 # or, against a running server (full stack):
 go run ./cmd/loadtest -mode http -url http://localhost:8080 \
   -api-key lb_yourkey -size 100000 -readers 16 -writers 16 -dur 5s
@@ -283,10 +323,12 @@ interface already supports it).
 
 Honest about what v1 is and isn't:
 
-- **Intra-board sharding** for a single board exceeding one node is designed
-  (the `Histogram` approximate-rank tier exists and is tested) but the
-  multi-node orchestration is a benchmarked follow-on — the breakpoint where a
-  single sorted set must shard should be measured first.
+- **Intra-board sharding** for a single board exceeding one node ships behind
+  `BOARD_SHARDS` (see [Sharding one board across nodes](#sharding-one-board-across-nodes)).
+  Top-N, pages, and neighbor windows stay exact via k-way merge; global rank
+  becomes an `exact:false` histogram estimate. The remaining tuning is empirical:
+  the breakpoint where a single set must shard, and the optimal shard count,
+  should be measured per workload with `cmd/loadtest`.
 - **KinesisLog** is provisioned by IaC but not yet implemented in code (Redis
   Streams + in-memory logs ship today; the `Log` interface is the seam).
 - **Multi-region active-active** is out of scope for v1.
