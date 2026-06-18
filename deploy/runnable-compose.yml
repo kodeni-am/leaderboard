@@ -38,6 +38,9 @@ services:
       WEB_DIR: /web
       PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL to the app's public URL}
       SECURE_COOKIES: "true"
+      # Browser games call the API cross-origin: "*" allows any origin (API-key
+      # auth only). Set a comma-separated allowlist to restrict it.
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
       LB_REAPER_RETAIN: "168h"
       SIGNING_SECRET: ${SIGNING_SECRET:-}
       # Account email (verification / reset). Point at your SMTP provider;

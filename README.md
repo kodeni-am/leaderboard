@@ -155,6 +155,7 @@ All query endpoints accept `segment=` and `window=` (a literal id like
 | `LB_STREAM` | `lb:ingest` | Redis stream name |
 | `PUBLIC_URL` | `http://localhost:8080` | Origin used in account email links |
 | `SECURE_COOKIES` | `false` | Set `true` behind HTTPS (Secure cookie flag) |
+| `CORS_ORIGINS` | `*` | Browser CORS: `*` (any origin, API-key only) or a comma-separated origin allowlist (reflects + allows credentials). Empty disables CORS |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | _(unset)_ | Email transport; unset → console sender (links logged) |
 | `SIGNING_SECRET` | _(unset)_ | Master key for per-app signed submissions; per-app secrets are derived from it. Unset → apps can't enable signing |
 | `LB_REAPER_RETAIN` | _(unset)_ | e.g. `168h` to enable the window reaper |
@@ -312,6 +313,8 @@ In Runnable: connect the repo, enable **compose mode** with
 - `SIGNING_SECRET` — optional master key enabling per-app signed submissions
   (anti-cheat). Tenants opt in per app from the dashboard and get their own
   derived secret; keep this master key private. Safe to set on a shared host.
+- `CORS_ORIGINS` — defaults to `*` so browser games on any domain can call the
+  API with their key. Set a comma-separated allowlist to restrict it.
 
 `SECURE_COOKIES` is already `true` and `REDIS_ADDR=redis:6379` is wired. Pushes
 to the repo auto-deploy.

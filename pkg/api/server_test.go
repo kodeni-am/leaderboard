@@ -55,6 +55,7 @@ func tokenFrom(text, marker string) string {
 
 type harness struct {
 	ts     *httptest.Server
+	srv    *Server
 	cons   *ingest.Consumer
 	eng    *engine.RedisEngine
 	mail   *captureSender
@@ -93,6 +94,7 @@ func newHarnessWith(t *testing.T, signingMaster string) *harness {
 	if signingMaster != "" {
 		srv.SetSigningMaster(signingMaster, 5*time.Minute)
 	}
+	srv.SetCORS("*") // match the production default so cross-origin behavior is tested
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	jar, _ := cookiejar.New(nil)
@@ -100,7 +102,7 @@ func newHarnessWith(t *testing.T, signingMaster string) *harness {
 		Jar:           jar,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return &harness{ts: ts, cons: cons, eng: eng, mail: mail, client: client}
+	return &harness{ts: ts, srv: srv, cons: cons, eng: eng, mail: mail, client: client}
 }
 
 // call issues a request via the cookie-jar client.
@@ -497,6 +499,64 @@ func TestSigningUnavailableWithoutMaster(t *testing.T) {
 	csrf := map[string]string{"X-CSRF-Token": h.csrf}
 	if resp, _ := h.call(t, http.MethodPut, "/v1/apps/"+h.appID+"/signing", csrf, map[string]any{"require_signing": true}); resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("enabling signing without master: got %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestCORS(t *testing.T) {
+	h := newHarness(t) // harness configures SetCORS("*")
+
+	// Preflight to the submit route (which only registers POST) is answered 204
+	// with permissive headers — the browser would otherwise block the real call.
+	req, _ := http.NewRequest(http.MethodOptions, h.ts.URL+"/v1/boards/x/scores", nil)
+	req.Header.Set("Origin", "https://game.example")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	resp, err := h.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want 204", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("preflight ACAO = %q, want *", got)
+	}
+	if !strings.Contains(resp.Header.Get("Access-Control-Allow-Headers"), "Authorization") {
+		t.Errorf("preflight missing Authorization in allowed headers: %q", resp.Header.Get("Access-Control-Allow-Headers"))
+	}
+
+	// Actual cross-origin GET carries the wildcard header on the response.
+	getReq, _ := http.NewRequest(http.MethodGet, h.ts.URL+"/healthz", nil)
+	getReq.Header.Set("Origin", "https://game.example")
+	getResp, err := h.client.Do(getReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getResp.Body.Close()
+	if got := getResp.Header.Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("GET ACAO = %q, want *", got)
+	}
+
+	// With an explicit allowlist, only listed origins are reflected (with
+	// credentials); others get no ACAO. SetCORS is read per-request, so this
+	// takes effect on the live server.
+	h.srv.SetCORS("https://allowed.example")
+	allow, _ := http.NewRequest(http.MethodGet, h.ts.URL+"/healthz", nil)
+	allow.Header.Set("Origin", "https://allowed.example")
+	ar, _ := h.client.Do(allow)
+	ar.Body.Close()
+	if ar.Header.Get("Access-Control-Allow-Origin") != "https://allowed.example" {
+		t.Errorf("allowlisted origin not reflected: %q", ar.Header.Get("Access-Control-Allow-Origin"))
+	}
+	if ar.Header.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Error("allowlisted origin should allow credentials")
+	}
+	deny, _ := http.NewRequest(http.MethodGet, h.ts.URL+"/healthz", nil)
+	deny.Header.Set("Origin", "https://evil.example")
+	dr, _ := h.client.Do(deny)
+	dr.Body.Close()
+	if got := dr.Header.Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("disallowed origin got ACAO = %q, want none", got)
 	}
 }
 

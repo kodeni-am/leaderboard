@@ -58,6 +58,7 @@ func main() {
 		boardShards = intEnv("BOARD_SHARDS", 1)
 		publicURL   = getenv("PUBLIC_URL", "http://localhost:8080")
 		secureCk    = os.Getenv("SECURE_COOKIES") == "true"
+		corsOrigins = getenv("CORS_ORIGINS", "*")
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -113,6 +114,8 @@ func main() {
 		srv.SetStaticDir(webDir)
 		log.Printf("serving dashboard SPA from %s", webDir)
 	}
+	srv.SetCORS(corsOrigins)
+	log.Printf("CORS allowed origins: %s", corsOrigins)
 	if err := srv.WarmRegistry(ctx); err != nil {
 		log.Fatalf("warm registry: %v", err)
 	}

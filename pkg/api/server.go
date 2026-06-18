@@ -31,16 +31,84 @@ type Server struct {
 	store         tenancy.Store
 	registry      *ingest.StaticRegistry
 	accounts      *accounts.Service
-	secureCookies bool          // set Secure on auth cookies (true behind TLS)
-	signingMaster string        // master key; per-app secrets derived from it. "" disables signing.
-	signingSkew   time.Duration // allowed timestamp skew for signed submissions
-	webDir        string        // if set, serve the SPA from this dir (same origin)
+	secureCookies bool            // set Secure on auth cookies (true behind TLS)
+	signingMaster string          // master key; per-app secrets derived from it. "" disables signing.
+	signingSkew   time.Duration   // allowed timestamp skew for signed submissions
+	webDir        string          // if set, serve the SPA from this dir (same origin)
+	corsWildcard  bool            // allow any origin (data plane; no credentials)
+	corsOrigins   map[string]bool // explicit origin allowlist (credentials allowed)
 }
 
 // SetStaticDir enables serving the built dashboard SPA from dir on the same
 // origin as the API (so a single container/host serves both). Unknown
 // non-API paths fall back to index.html for client-side routing.
 func (s *Server) SetStaticDir(dir string) { s.webDir = dir }
+
+// SetCORS configures cross-origin access for browser game clients. spec is a
+// comma-separated list of allowed origins, or "*" for any. Game clients
+// authenticate with an explicit API-key header (no ambient cookie), so wildcard
+// is safe for the data plane — but the spec forbids credentials with "*", so we
+// only allow credentials (cookies) when an explicit allowlist is set. Empty spec
+// leaves CORS off.
+func (s *Server) SetCORS(spec string) {
+	s.corsWildcard = false
+	s.corsOrigins = nil
+	for _, o := range strings.Split(spec, ",") {
+		o = strings.TrimSpace(o)
+		if o == "" {
+			continue
+		}
+		if o == "*" {
+			s.corsWildcard = true
+			continue
+		}
+		if s.corsOrigins == nil {
+			s.corsOrigins = map[string]bool{}
+		}
+		s.corsOrigins[o] = true
+	}
+}
+
+// corsHeaders applies the right Access-Control-Allow-* headers for the request's
+// Origin and reports whether CORS is active at all (for preflight handling).
+func (s *Server) corsHeaders(w http.ResponseWriter, r *http.Request) bool {
+	if !s.corsWildcard && len(s.corsOrigins) == 0 {
+		return false
+	}
+	origin := r.Header.Get("Origin")
+	h := w.Header()
+	switch {
+	case origin != "" && s.corsOrigins[origin]:
+		// Explicit allowlist match: reflect the origin and allow credentials.
+		h.Set("Access-Control-Allow-Origin", origin)
+		h.Set("Access-Control-Allow-Credentials", "true")
+		h.Add("Vary", "Origin")
+	case s.corsWildcard:
+		// Any origin, but no credentials (cookies) — API-key auth only.
+		h.Set("Access-Control-Allow-Origin", "*")
+	default:
+		return true // CORS configured, but this origin isn't allowed (no ACAO).
+	}
+	return true
+}
+
+// withCORS adds CORS headers and answers preflight OPTIONS requests, which the
+// method-specific routes would otherwise reject. Wraps the whole router.
+func (s *Server) withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		active := s.corsHeaders(w, r)
+		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+			if active {
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, X-App-Id, X-CSRF-Token")
+				w.Header().Set("Access-Control-Max-Age", "600")
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func NewServer(eng engine.RankingEngine, ing *ingest.Ingestor, store tenancy.Store, registry *ingest.StaticRegistry, acct *accounts.Service, secureCookies bool) *Server {
 	return &Server{eng: eng, ing: ing, store: store, registry: registry, accounts: acct, secureCookies: secureCookies}
@@ -130,7 +198,7 @@ func (s *Server) Handler() http.Handler {
 	if s.webDir != "" {
 		mux.Handle("/", instrument("/", s.staticFileHandler()))
 	}
-	return mux
+	return s.withCORS(mux)
 }
 
 // staticFileHandler serves the SPA from s.webDir: real files are served
