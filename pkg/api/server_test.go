@@ -260,6 +260,69 @@ func TestAuthFlows(t *testing.T) {
 	}
 }
 
+func TestKeyManagement(t *testing.T) {
+	h := newHarness(t)
+	h.onboard(t, "keys@example.com")
+	t.Cleanup(func() {
+		h.call(t, http.MethodDelete, "/v1/apps/"+h.appID, map[string]string{"X-CSRF-Token": h.csrf}, nil)
+	})
+
+	withKey := func(k string) map[string]string { return map[string]string{"Authorization": "Bearer " + k} }
+
+	// Exactly one key after app creation; it has a masked prefix.
+	_, body := h.call(t, http.MethodGet, "/v1/apps/"+h.appID+"/keys", nil, nil)
+	var lk struct {
+		Keys []struct {
+			ID     string `json:"id"`
+			Prefix string `json:"prefix"`
+		} `json:"keys"`
+	}
+	json.Unmarshal(body, &lk)
+	if len(lk.Keys) != 1 || lk.Keys[0].Prefix == "" {
+		t.Fatalf("initial keys: %s", body)
+	}
+	origKeyID := lk.Keys[0].ID
+
+	// Issue a second key — zero-downtime rotation: both keys work.
+	resp, body := h.call(t, http.MethodPost, "/v1/apps/"+h.appID+"/keys", map[string]string{"X-CSRF-Token": h.csrf}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("issue key: %d %s", resp.StatusCode, body)
+	}
+	var nk struct {
+		APIKey string `json:"api_key"`
+	}
+	json.Unmarshal(body, &nk)
+	if r, _ := h.call(t, http.MethodGet, "/v1/boards", withKey(h.apiKey), nil); r.StatusCode != http.StatusOK {
+		t.Errorf("original key should still work: %d", r.StatusCode)
+	}
+	if r, _ := h.call(t, http.MethodGet, "/v1/boards", withKey(nk.APIKey), nil); r.StatusCode != http.StatusOK {
+		t.Errorf("new key should work: %d", r.StatusCode)
+	}
+
+	// Revoke the original key: it stops working, the new one still does.
+	if r, _ := h.call(t, http.MethodDelete, "/v1/apps/"+h.appID+"/keys/"+origKeyID, map[string]string{"X-CSRF-Token": h.csrf}, nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("revoke key: %d", r.StatusCode)
+	}
+	if r, _ := h.call(t, http.MethodGet, "/v1/boards", withKey(h.apiKey), nil); r.StatusCode != http.StatusUnauthorized {
+		t.Errorf("revoked key should be 401, got %d", r.StatusCode)
+	}
+	if r, _ := h.call(t, http.MethodGet, "/v1/boards", withKey(nk.APIKey), nil); r.StatusCode != http.StatusOK {
+		t.Errorf("surviving key should still work, got %d", r.StatusCode)
+	}
+
+	// Delete the app: remaining key stops working and it leaves the owner's list.
+	if r, _ := h.call(t, http.MethodDelete, "/v1/apps/"+h.appID, map[string]string{"X-CSRF-Token": h.csrf}, nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("delete app: %d", r.StatusCode)
+	}
+	if r, _ := h.call(t, http.MethodGet, "/v1/boards", withKey(nk.APIKey), nil); r.StatusCode != http.StatusUnauthorized {
+		t.Errorf("key after app delete should be 401, got %d", r.StatusCode)
+	}
+	_, body = h.call(t, http.MethodGet, "/v1/apps", nil, nil)
+	if s := string(body); !strings.Contains(s, `"apps":[]`) && !strings.Contains(s, `"apps":null`) {
+		t.Errorf("owner should have no apps after delete: %s", body)
+	}
+}
+
 func TestMetricsEndpoint(t *testing.T) {
 	h := newHarness(t)
 	h.onboard(t, "metrics@example.com")

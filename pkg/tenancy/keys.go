@@ -34,6 +34,15 @@ func newAPIKey() (plaintext, hash string, err error) {
 	return plaintext, hashKey(plaintext), nil
 }
 
+// keyPrefix returns a masked, non-secret identifier for display, e.g.
+// "lb_3f9c…a1b2".
+func keyPrefix(plaintext string) string {
+	if len(plaintext) < 12 {
+		return plaintext
+	}
+	return plaintext[:7] + "…" + plaintext[len(plaintext)-4:]
+}
+
 // hashKey is the deterministic hash used for storage and lookup.
 func hashKey(plaintext string) string {
 	sum := sha256.Sum256([]byte(plaintext))

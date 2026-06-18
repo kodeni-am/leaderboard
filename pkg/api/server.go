@@ -84,9 +84,13 @@ func (s *Server) Handler() http.Handler {
 	user("POST /auth/logout", s.handleLogout)
 	user("GET /auth/me", s.handleMe)
 
-	// App management (owner-scoped, session-authed).
+	// App + key management (owner-scoped, session-authed).
 	user("POST /v1/apps", s.handleCreateApp)
 	user("GET /v1/apps", s.handleListApps)
+	user("DELETE /v1/apps/{id}", s.handleDeleteApp)
+	user("GET /v1/apps/{id}/keys", s.handleListKeys)
+	user("POST /v1/apps/{id}/keys", s.handleIssueKey)
+	user("DELETE /v1/apps/{id}/keys/{keyId}", s.handleRevokeKey)
 
 	// Data plane (API-key or session+app-id).
 	dataPlane("POST /v1/boards", s.handleCreateBoard)

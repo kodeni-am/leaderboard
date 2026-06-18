@@ -15,7 +15,18 @@ var (
 	ErrAppNotFound   = errors.New("tenancy: app not found")
 	ErrBoardNotFound = errors.New("tenancy: board not found")
 	ErrInvalidKey    = errors.New("tenancy: invalid api key")
+	ErrKeyNotFound   = errors.New("tenancy: api key not found")
 )
+
+// APIKey is the non-secret metadata for an issued key. The secret itself is
+// only ever returned once (at issue time); only a hash is stored. Prefix is a
+// masked identifier for display, e.g. "lb_3f9c…a1b2".
+type APIKey struct {
+	ID        string    `json:"id"`
+	AppID     string    `json:"app_id"`
+	Prefix    string    `json:"prefix"`
+	CreatedAt time.Time `json:"created_at"`
+}
 
 // App is a tenant, owned by a dashboard user. The plaintext API key is shown
 // once at creation and never stored — only its hash is persisted.
@@ -37,6 +48,17 @@ type Store interface {
 	ListApps(ctx context.Context, ownerUserID string) ([]App, error)
 	// AppByKey authenticates a plaintext API key to its owning tenant.
 	AppByKey(ctx context.Context, plaintextKey string) (App, error)
+
+	// IssueKey mints an additional API key for an app (zero-downtime rotation:
+	// add a new key, migrate clients, then revoke the old). Returns the
+	// one-time plaintext key plus its metadata.
+	IssueKey(ctx context.Context, appID string) (plaintext string, key APIKey, err error)
+	// ListKeys returns the non-secret metadata for an app's keys.
+	ListKeys(ctx context.Context, appID string) ([]APIKey, error)
+	// RevokeKey invalidates a single key by id (must belong to appID).
+	RevokeKey(ctx context.Context, appID, keyID string) error
+	// DeleteApp removes an app and all of its keys and boards.
+	DeleteApp(ctx context.Context, appID string) error
 
 	// UpsertBoard stores a board definition under its app.
 	UpsertBoard(ctx context.Context, lb engine.LogicalBoard) error

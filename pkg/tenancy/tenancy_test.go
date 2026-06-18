@@ -75,6 +75,56 @@ func storeContract(t *testing.T, s Store) {
 	if err := s.UpsertBoard(ctx, engine.LogicalBoard{App: "app_nope", Board: "x"}); !errors.Is(err, ErrAppNotFound) {
 		t.Errorf("expected ErrAppNotFound, got %v", err)
 	}
+
+	// --- API key lifecycle (multi-key rotation) ---
+	keys, err := s.ListKeys(ctx, app.ID)
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("ListKeys initial: %v / %v", keys, err)
+	}
+	if keys[0].Prefix == "" || keys[0].AppID != app.ID {
+		t.Errorf("key metadata missing prefix/appID: %+v", keys[0])
+	}
+	// Issue a second key; both keys authenticate (zero-downtime rotation).
+	plain2, k2, err := s.IssueKey(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.AppByKey(ctx, plain2); err != nil || got.ID != app.ID {
+		t.Fatalf("new key should authenticate: %v / %v", got, err)
+	}
+	if ks, _ := s.ListKeys(ctx, app.ID); len(ks) != 2 {
+		t.Fatalf("ListKeys after issue = %d, want 2", len(ks))
+	}
+	// Revoke the original key: it stops working, the new one still does.
+	if err := s.RevokeKey(ctx, app.ID, keys[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AppByKey(ctx, key); !errors.Is(err, ErrInvalidKey) {
+		t.Errorf("revoked key should fail, got %v", err)
+	}
+	if got, err := s.AppByKey(ctx, plain2); err != nil || got.ID != app.ID {
+		t.Errorf("surviving key should still work: %v / %v", got, err)
+	}
+	if ks, _ := s.ListKeys(ctx, app.ID); len(ks) != 1 || ks[0].ID != k2.ID {
+		t.Fatalf("ListKeys after revoke = %v", ks)
+	}
+	if err := s.RevokeKey(ctx, app.ID, "key_nope"); !errors.Is(err, ErrKeyNotFound) {
+		t.Errorf("revoke unknown key: %v", err)
+	}
+
+	// --- delete app: app, keys, and boards are all removed ---
+	if err := s.DeleteApp(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetApp(ctx, app.ID); !errors.Is(err, ErrAppNotFound) {
+		t.Errorf("app should be gone, got %v", err)
+	}
+	if _, err := s.AppByKey(ctx, plain2); !errors.Is(err, ErrInvalidKey) {
+		t.Errorf("keys should be gone after delete, got %v", err)
+	}
+	if owned, _ := s.ListApps(ctx, owner); len(owned) != 0 {
+		t.Errorf("owner should have no apps after delete, got %d", len(owned))
+	}
 }
 
 func TestMemStoreContract(t *testing.T) {

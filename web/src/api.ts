@@ -12,6 +12,11 @@ export interface AppInfo {
   name: string;
   created_at?: string;
 }
+export interface KeyInfo {
+  id: string;
+  prefix: string;
+  created_at?: string;
+}
 export interface RankEntry {
   member: string;
   score: number;
@@ -83,6 +88,10 @@ export const api = {
 
   listApps: () => req<{ apps: AppInfo[] }>("GET", "/v1/apps"),
   createApp: (name: string) => req<{ id: string; name: string; api_key: string }>("POST", "/v1/apps", { name }),
+  deleteApp: (appId: string) => req<unknown>("DELETE", `/v1/apps/${appId}`),
+  listKeys: (appId: string) => req<{ keys: KeyInfo[] }>("GET", `/v1/apps/${appId}/keys`),
+  issueKey: (appId: string) => req<{ id: string; prefix: string; api_key: string }>("POST", `/v1/apps/${appId}/keys`),
+  revokeKey: (appId: string, keyId: string) => req<unknown>("DELETE", `/v1/apps/${appId}/keys/${keyId}`),
 
   listBoards: (appId: string) => req<{ boards: { app: string; board: string }[] }>("GET", "/v1/boards", undefined, appHdr(appId)),
   createBoard: (appId: string, def: BoardDef) => req<unknown>("POST", "/v1/boards", def, appHdr(appId)),

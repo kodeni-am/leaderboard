@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, type AppInfo, type RankEntry, ApiError } from "../api";
+import { api, type AppInfo, type KeyInfo, type RankEntry, ApiError } from "../api";
 import { useAuth } from "../auth";
 import { Logo, Field, Spinner } from "../components";
 
@@ -18,8 +18,11 @@ export default function Dashboard() {
     try {
       const { apps } = await api.listApps();
       setApps(apps);
-      if (apps.length && !selectId && !appId) setAppId(apps[0].id);
-      if (selectId) setAppId(selectId);
+      setAppId((prev) => {
+        if (selectId) return selectId;
+        if (prev && apps.some((a) => a.id === prev)) return prev;
+        return apps[0]?.id ?? "";
+      });
     } catch (e) {
       setErr((e as ApiError).message);
     } finally {
@@ -82,7 +85,7 @@ export default function Dashboard() {
               </div>
               <NewAppButton onCreate={(name) => createApp(name, setNewKey, loadApps, setErr)} />
             </div>
-            {appId && <AppWorkspace appId={appId} />}
+            {appId && <AppWorkspace appId={appId} onAppDeleted={() => { setNewKey(""); void loadApps(); }} />}
           </>
         )}
       </div>
@@ -137,7 +140,7 @@ function EmptyApps({ onCreate }: { onCreate: (name: string) => void }) {
 
 // ---- per-app workspace: boards + viewer + test submit ----
 
-function AppWorkspace({ appId }: { appId: string }) {
+function AppWorkspace({ appId, onAppDeleted }: { appId: string; onAppDeleted: () => void }) {
   const [boards, setBoards] = useState<string[]>([]);
   const [board, setBoard] = useState("");
   const [err, setErr] = useState("");
@@ -162,6 +165,7 @@ function AppWorkspace({ appId }: { appId: string }) {
     <div className="dash-grid">
       <div className="stack-sm">
         {err && <div className="notice err">{err}</div>}
+        <AppKeys appId={appId} onDeleted={onAppDeleted} />
         <BoardCreator appId={appId} onCreated={loadBoards} />
         <BoardList boards={boards} active={board} onPick={setBoard} />
       </div>
@@ -195,6 +199,85 @@ function BoardList({ boards, active, onPick }: { boards: string[]; active: strin
           {b === active ? "▸ " : "  "}{b}
         </button>
       ))}
+    </div>
+  );
+}
+
+function AppKeys({ appId, onDeleted }: { appId: string; onDeleted: () => void }) {
+  const [keys, setKeys] = useState<KeyInfo[]>([]);
+  const [newKey, setNewKey] = useState("");
+  const [err, setErr] = useState("");
+
+  async function load() {
+    try {
+      const { keys } = await api.listKeys(appId);
+      setKeys(keys);
+    } catch (e) {
+      setErr((e as ApiError).message);
+    }
+  }
+  useEffect(() => {
+    setNewKey("");
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId]);
+
+  const danger = { borderColor: "var(--danger)", color: "var(--danger)" };
+
+  async function issue() {
+    try {
+      const r = await api.issueKey(appId);
+      setNewKey(r.api_key);
+      await load();
+    } catch (e) {
+      setErr((e as ApiError).message);
+    }
+  }
+  async function revoke(id: string) {
+    if (keys.length <= 1 && !window.confirm("Revoke the last key? The app will have no working key until you create a new one.")) return;
+    try {
+      await api.revokeKey(appId, id);
+      await load();
+    } catch (e) {
+      setErr((e as ApiError).message);
+    }
+  }
+  async function del() {
+    if (!window.confirm("Delete this app? Its keys and boards are permanently removed.")) return;
+    try {
+      await api.deleteApp(appId);
+      onDeleted();
+    } catch (e) {
+      setErr((e as ApiError).message);
+    }
+  }
+
+  return (
+    <div className="panel">
+      <div className="spread" style={{ marginBottom: 12 }}>
+        <span className="eyebrow">API KEYS · {keys.length}</span>
+        <button className="btn btn-sm" onClick={() => void issue()}>+ New key</button>
+      </div>
+      {err && <div className="notice err">{err}</div>}
+      {newKey && (
+        <div className="notice ok" style={{ wordBreak: "break-all" }}>
+          <div style={{ marginBottom: 6 }}><b>New key</b> — copy now, shown once:</div>
+          <code className="muted-code" style={{ display: "block", marginBottom: 8 }}>{newKey}</code>
+          <button className="btn btn-sm" onClick={() => void navigator.clipboard?.writeText(newKey)}>Copy</button>
+        </div>
+      )}
+      <div className="stack-sm">
+        {keys.map((k) => (
+          <div key={k.id} className="spread" style={{ fontSize: 13 }}>
+            <code className="mono" style={{ color: "var(--cyan)" }}>{k.prefix}</code>
+            <button className="btn btn-ghost btn-sm" style={danger} onClick={() => void revoke(k.id)}>Revoke</button>
+          </div>
+        ))}
+        {keys.length === 0 && <div className="dim" style={{ fontSize: 13 }}>No active keys — create one.</div>}
+      </div>
+      <div style={{ borderTop: "1px solid var(--line)", marginTop: 14, paddingTop: 14 }}>
+        <button className="btn btn-ghost btn-sm" style={danger} onClick={() => void del()}>Delete app</button>
+      </div>
     </div>
   );
 }

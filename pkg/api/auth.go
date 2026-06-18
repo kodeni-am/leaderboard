@@ -302,3 +302,74 @@ func (s *Server) handleListApps(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"apps": apps})
 }
+
+// ownedApp resolves the {id} path param to an app the session user owns, or
+// writes a 404 and returns ok=false.
+func (s *Server) ownedApp(w http.ResponseWriter, r *http.Request) (tenancy.App, bool) {
+	u, _ := userFromContext(r.Context())
+	app, err := s.store.GetApp(r.Context(), r.PathValue("id"))
+	if err != nil || app.OwnerUserID != u.ID {
+		writeErr(w, http.StatusNotFound, "app not found")
+		return tenancy.App{}, false
+	}
+	return app, true
+}
+
+func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.ownedApp(w, r)
+	if !ok {
+		return
+	}
+	keys, err := s.store.ListKeys(r.Context(), app.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if keys == nil {
+		keys = []tenancy.APIKey{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"keys": keys})
+}
+
+func (s *Server) handleIssueKey(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.ownedApp(w, r)
+	if !ok {
+		return
+	}
+	plain, key, err := s.store.IssueKey(r.Context(), app.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// Plaintext is shown exactly once.
+	writeJSON(w, http.StatusCreated, map[string]any{"id": key.ID, "prefix": key.Prefix, "api_key": plain})
+}
+
+func (s *Server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.ownedApp(w, r)
+	if !ok {
+		return
+	}
+	err := s.store.RevokeKey(r.Context(), app.ID, r.PathValue("keyId"))
+	if errors.Is(err, tenancy.ErrKeyNotFound) {
+		writeErr(w, http.StatusNotFound, "key not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.ownedApp(w, r)
+	if !ok {
+		return
+	}
+	if err := s.store.DeleteApp(r.Context(), app.ID); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

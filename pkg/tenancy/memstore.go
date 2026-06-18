@@ -11,9 +11,12 @@ import (
 // MemStore is an in-memory Store for tests and single-process local runs.
 type MemStore struct {
 	mu       sync.RWMutex
-	apps     map[string]App                            // id -> app
-	keyIndex map[string]string                         // keyHash -> appID
-	boards   map[string]map[string]engine.LogicalBoard // appID -> board -> def
+	apps     map[string]App
+	keyIndex map[string]string              // keyHash -> appID (auth lookup)
+	keyMeta  map[string]APIKey              // keyID -> metadata
+	keyHash  map[string]string              // keyID -> keyHash
+	appKeys  map[string]map[string]struct{} // appID -> set of keyIDs
+	boards   map[string]map[string]engine.LogicalBoard
 	now      func() time.Time
 }
 
@@ -21,27 +24,108 @@ func NewMemStore() *MemStore {
 	return &MemStore{
 		apps:     map[string]App{},
 		keyIndex: map[string]string{},
+		keyMeta:  map[string]APIKey{},
+		keyHash:  map[string]string{},
+		appKeys:  map[string]map[string]struct{}{},
 		boards:   map[string]map[string]engine.LogicalBoard{},
 		now:      func() time.Time { return time.Now().UTC() },
 	}
 }
 
-func (s *MemStore) CreateApp(_ context.Context, ownerUserID, name string) (App, string, error) {
+func (s *MemStore) CreateApp(ctx context.Context, ownerUserID, name string) (App, string, error) {
 	id, err := newID("app_")
-	if err != nil {
-		return App{}, "", err
-	}
-	plain, hash, err := newAPIKey()
 	if err != nil {
 		return App{}, "", err
 	}
 	app := App{ID: id, Name: name, OwnerUserID: ownerUserID, CreatedAt: s.now()}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.apps[id] = app
-	s.keyIndex[hash] = id
 	s.boards[id] = map[string]engine.LogicalBoard{}
+	s.appKeys[id] = map[string]struct{}{}
+	s.mu.Unlock()
+	plain, _, err := s.IssueKey(ctx, id)
+	if err != nil {
+		return App{}, "", err
+	}
 	return app, plain, nil
+}
+
+func (s *MemStore) IssueKey(_ context.Context, appID string) (string, APIKey, error) {
+	plain, hash, err := newAPIKey()
+	if err != nil {
+		return "", APIKey{}, err
+	}
+	keyID, err := newID("key_")
+	if err != nil {
+		return "", APIKey{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.apps[appID]; !ok {
+		return "", APIKey{}, ErrAppNotFound
+	}
+	k := APIKey{ID: keyID, AppID: appID, Prefix: keyPrefix(plain), CreatedAt: s.now()}
+	s.keyIndex[hash] = appID
+	s.keyMeta[keyID] = k
+	s.keyHash[keyID] = hash
+	if s.appKeys[appID] == nil {
+		s.appKeys[appID] = map[string]struct{}{}
+	}
+	s.appKeys[appID][keyID] = struct{}{}
+	return plain, k, nil
+}
+
+func (s *MemStore) ListKeys(_ context.Context, appID string) ([]APIKey, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]APIKey, 0, len(s.appKeys[appID]))
+	for keyID := range s.appKeys[appID] {
+		if k, ok := s.keyMeta[keyID]; ok {
+			out = append(out, k)
+		}
+	}
+	return out, nil
+}
+
+func (s *MemStore) RevokeKey(_ context.Context, appID, keyID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k, ok := s.keyMeta[keyID]
+	if !ok || k.AppID != appID {
+		return ErrKeyNotFound
+	}
+	delete(s.keyIndex, s.keyHash[keyID])
+	delete(s.keyHash, keyID)
+	delete(s.keyMeta, keyID)
+	delete(s.appKeys[appID], keyID)
+	return nil
+}
+
+func (s *MemStore) DeleteApp(_ context.Context, appID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.apps[appID]; !ok {
+		return ErrAppNotFound
+	}
+	for keyID := range s.appKeys[appID] {
+		delete(s.keyIndex, s.keyHash[keyID])
+		delete(s.keyHash, keyID)
+		delete(s.keyMeta, keyID)
+	}
+	delete(s.appKeys, appID)
+	delete(s.boards, appID)
+	delete(s.apps, appID)
+	return nil
+}
+
+func (s *MemStore) GetApp(_ context.Context, id string) (App, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	app, ok := s.apps[id]
+	if !ok {
+		return App{}, ErrAppNotFound
+	}
+	return app, nil
 }
 
 func (s *MemStore) ListApps(_ context.Context, ownerUserID string) ([]App, error) {
@@ -54,16 +138,6 @@ func (s *MemStore) ListApps(_ context.Context, ownerUserID string) ([]App, error
 		}
 	}
 	return out, nil
-}
-
-func (s *MemStore) GetApp(_ context.Context, id string) (App, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	app, ok := s.apps[id]
-	if !ok {
-		return App{}, ErrAppNotFound
-	}
-	return app, nil
 }
 
 func (s *MemStore) AppByKey(_ context.Context, plaintextKey string) (App, error) {
