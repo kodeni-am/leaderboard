@@ -11,19 +11,16 @@
 //
 // HTTP mode (full stack: API + ingest + consumer):
 //
-//	loadtest -mode http -url http://localhost:8080 -admin-token dev-admin-token \
+//	loadtest -mode http -url http://localhost:8080 -api-key lb_yourkey \
 //	         -size 100000 -readers 16 -writers 16 -dur 5s
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"math/rand"
-	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -41,7 +38,7 @@ func main() {
 	mode := flag.String("mode", "engine", "engine | http")
 	redisAddr := flag.String("redis", "localhost:6379", "Redis address (engine mode)")
 	url := flag.String("url", "http://localhost:8080", "server URL (http mode)")
-	adminToken := flag.String("admin-token", "dev-admin-token", "admin token (http mode)")
+	apiKey := flag.String("api-key", "", "API key for http mode (create an app in the dashboard to get one)")
 	sizesStr := flag.String("sizes", "1000,10000,100000,1000000", "engine mode: board sizes to test read latency at")
 	size := flag.Int("size", 100000, "http mode: board size to seed")
 	readers := flag.Int("readers", 8, "concurrent reader goroutines")
@@ -53,7 +50,10 @@ func main() {
 	case "engine":
 		runEngine(*redisAddr, parseSizes(*sizesStr), *readers, *writers, *durFlag)
 	case "http":
-		runHTTP(*url, *adminToken, *size, *readers, *writers, *durFlag)
+		if *apiKey == "" {
+			log.Fatal("http mode requires -api-key (create an app in the dashboard)")
+		}
+		runHTTP(*url, *apiKey, *size, *readers, *writers, *durFlag)
 	default:
 		log.Fatalf("unknown mode %q (want engine|http)", *mode)
 	}
@@ -261,11 +261,9 @@ func seedBoard(ctx context.Context, eng *engine.RedisEngine, board engine.Board,
 
 // ---------- http mode ----------
 
-func runHTTP(url, adminToken string, size, readers, writers int, dur time.Duration) {
+func runHTTP(url, apiKey string, size, readers, writers int, dur time.Duration) {
 	ctx := context.Background()
-	// Provision an app via the admin endpoint, then a board, using a tiny client.
-	key := createApp(url, adminToken)
-	c := sdk.New(url, key)
+	c := sdk.New(url, apiKey)
 	board := "bench"
 	if err := c.CreateBoard(ctx, sdk.BoardDef{Board: board, UpdatePolicy: "best"}); err != nil {
 		log.Fatalf("create board: %v", err)
@@ -314,31 +312,4 @@ func seedHTTP(ctx context.Context, c *sdk.Client, board string, size int) {
 	}
 	close(work)
 	wg.Wait()
-}
-
-// createApp calls the admin endpoint directly (it is not part of the tenant
-// SDK) and returns the new API key.
-func createApp(url, adminToken string) string {
-	body := bytes.NewReader([]byte(`{"name":"loadtest"}`))
-	req, err := http.NewRequest(http.MethodPost, url+"/v1/apps", body)
-	if err != nil {
-		log.Fatalf("create app: %v", err)
-	}
-	req.Header.Set("X-Admin-Token", adminToken)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		log.Fatalf("create app: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		log.Fatalf("create app: HTTP %d", resp.StatusCode)
-	}
-	var out struct {
-		APIKey string `json:"api_key"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		log.Fatalf("create app decode: %v", err)
-	}
-	return out.APIKey
 }

@@ -67,13 +67,20 @@ docker compose up --build leaderboardd     # starts Redis + the server on :8080
 curl localhost:8080/healthz                 # {"status":"ok"}
 ```
 
-Create a tenant, define a board, submit and query:
+Get an API key, define a board, submit and query. **Easiest:** sign up in the
+**dashboard** (`web/`) and create an app — it shows the API key once. Or via the
+account API directly (signup → verify the emailed link → log in → create app):
 
 ```bash
 BASE=localhost:8080
 
-# 1. Create an app (admin token from docker-compose.yml)
-APP=$(curl -s -X POST $BASE/v1/apps -H "X-Admin-Token: dev-admin-token" -d '{"name":"DemoGame"}')
+# 1. Create an account, verify the email (in dev, open Mailpit at :8025 for the
+#    link), then log in to get a session cookie + CSRF token.
+curl -s -X POST $BASE/auth/signup -d '{"email":"you@example.com","password":"hunter2hunter"}'
+#    → open the verification link from Mailpit, then:
+curl -s -c cj.txt -X POST $BASE/auth/login -d '{"email":"you@example.com","password":"hunter2hunter"}'
+#    grab "csrf_token" from that response, then create an app (key shown once):
+APP=$(curl -s -b cj.txt -H "X-CSRF-Token: <csrf>" -X POST $BASE/v1/apps -d '{"name":"DemoGame"}')
 KEY=$(echo "$APP" | sed -E 's/.*"api_key":"([^"]+)".*/\1/')
 
 # 2. Define a board (higher is better; all-time + daily windows)
@@ -97,7 +104,9 @@ curl -s "$BASE/v1/boards/high/top?n=10&segment=region=eu"      -H "Authorization
 | Method & path | Purpose |
 |---|---|
 | `GET /healthz` | Liveness |
-| `POST /v1/apps` | Create tenant (requires `X-Admin-Token`) → returns one-time API key |
+| `POST /auth/signup` · `/auth/login` · `/auth/logout` | Account auth (session cookie) |
+| `GET /auth/verify` · `POST /auth/forgot` · `/auth/reset` | Email verification & password reset |
+| `POST /v1/apps` · `GET /v1/apps` | Create/list apps (session-authed, owner-scoped) → key shown once |
 | `POST /v1/boards` | Define a board |
 | `GET /v1/boards` | List boards |
 | `POST /v1/boards/{board}/scores` | Submit a score (write-behind) |
@@ -108,8 +117,11 @@ curl -s "$BASE/v1/boards/high/top?n=10&segment=region=eu"      -H "Authorization
 | `POST /v1/boards/{board}/friends` | Rank an explicit member list |
 
 All query endpoints accept `segment=` and `window=` (a literal id like
-`d=2026-06-13`, or a cadence keyword `daily`/`weekly`/`monthly`). Auth via
-`Authorization: Bearer <key>` or `X-API-Key`.
+`d=2026-06-13`, or a cadence keyword `daily`/`weekly`/`monthly`).
+
+**Two auth planes** on `/v1/boards/*`: game clients use `Authorization: Bearer
+<api-key>` (or `X-API-Key`); the dashboard uses its session cookie plus an
+`X-App-Id` header for an app the logged-in user owns (CSRF required on mutations).
 
 ## Repository layout
 
@@ -135,7 +147,9 @@ All query endpoints accept `segment=` and `window=` (a literal id like
 | `LISTEN_ADDR` | `:8080` | HTTP listen address |
 | `LB_LOG_BACKEND` | `redis` | `redis` (Streams) or `mem` |
 | `LB_STREAM` | `lb:ingest` | Redis stream name |
-| `ADMIN_TOKEN` | _(unset)_ | Required to create apps |
+| `PUBLIC_URL` | `http://localhost:8080` | Origin used in account email links |
+| `SECURE_COOKIES` | `false` | Set `true` behind HTTPS (Secure cookie flag) |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | _(unset)_ | Email transport; unset → console sender (links logged) |
 | `SIGNING_SECRET` | _(unset)_ | Enables HMAC submission verification |
 | `LB_REAPER_RETAIN` | _(unset)_ | e.g. `168h` to enable the window reaper |
 | `INGEST_PARTITIONS` | `16` | Stream partitions (set once; changing it later rehashes routing) |
@@ -184,7 +198,7 @@ set stops scaling.
 make loadtest                              # engine mode against the compose Redis
 # or, against a running server (full stack):
 go run ./cmd/loadtest -mode http -url http://localhost:8080 \
-  -admin-token dev-admin-token -size 100000 -readers 16 -writers 16 -dur 5s
+  -api-key lb_yourkey -size 100000 -readers 16 -writers 16 -dur 5s
 ```
 
 **Engine mode** seeds a board to each size and measures `GetRank` latency;
@@ -210,7 +224,7 @@ persistent Redis (AOF), `leaderboardd`, a **Caddy** reverse proxy with automatic
 HTTPS, and **Prometheus**.
 
 ```bash
-cp deploy/.env.example deploy/.env     # set DOMAIN, ADMIN_TOKEN, ...
+cp deploy/.env.example deploy/.env     # set DOMAIN, PUBLIC_URL, SMTP_*, ...
 docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
 ```
 
