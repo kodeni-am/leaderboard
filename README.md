@@ -136,6 +136,9 @@ All query endpoints accept `segment=` and `window=` (a literal id like
 | `pkg/sdk` | SP8 | Reference Go client |
 | `sdk/unity` | SP8 | Unity/C# client SDK (UPM package, async/await) |
 | `sdk/typescript` | SP8 | TypeScript client SDK (browser + Node 18+) |
+| `pkg/accounts` | SP9 | User accounts, sessions, email verification/reset |
+| `pkg/email` | SP9 | Transactional email (console + SMTP) |
+| `web` | SP10 | React+Vite landing page + dashboard |
 | `cmd/leaderboardd` | — | The server binary |
 | `deploy/terraform` | SP6 | AWS reference architecture (scaffold) |
 
