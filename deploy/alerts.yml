@@ -1,0 +1,67 @@
+# Prometheus alerting rules for OpenLeaderboard. Loaded by prometheus.yml
+# (rule_files) and routed to Alertmanager. Thresholds are starting points —
+# tune to your traffic and SLOs.
+groups:
+  - name: leaderboard
+    rules:
+      # The server is unreachable from Prometheus.
+      - alert: LeaderboardTargetDown
+        expr: up{job="leaderboardd"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "leaderboardd is down"
+          description: "Prometheus cannot scrape leaderboardd for >2m."
+
+      # More than 5% of requests are 5xx.
+      - alert: HighHTTPErrorRate
+        expr: |
+          sum(rate(lb_http_requests_total{code=~"5.."}[5m]))
+            / clamp_min(sum(rate(lb_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 5xx error rate"
+          description: "{{ $value | humanizePercentage }} of HTTP requests are 5xx over 5m."
+
+      # Read-path p99 latency exceeds the SLO. Reads should be sub-millisecond;
+      # 50ms sustained signals Redis pressure or a degraded node.
+      - alert: HighReadLatencyP99
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(lb_http_request_duration_seconds_bucket{route=~"/v1/boards/.*/(rank|top|neighbors|page)"}[5m]))
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Read p99 latency above 50ms"
+          description: "Rank/read p99 is {{ $value | humanizeDuration }} over 10m."
+
+      # Scores are being accepted but the consumer is not applying them, so
+      # leaderboards are going stale (the durable-log replay/consumer is stuck).
+      - alert: ConsumerStalled
+        expr: |
+          sum(rate(lb_submits_total{result="accepted"}[5m])) > 0
+            and sum(rate(lb_consumer_records_applied_total[5m])) == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ingest consumer stalled"
+          description: "Submissions are accepted but no records are being applied to the engine for >5m."
+
+      # A large fraction of submissions are being rejected (bad HMAC) — possible
+      # misconfiguration or abuse.
+      - alert: HighSubmitRejectionRate
+        expr: |
+          sum(rate(lb_submits_total{result="rejected"}[5m]))
+            / clamp_min(sum(rate(lb_submits_total[5m])), 0.001) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High submission rejection rate"
+          description: "{{ $value | humanizePercentage }} of submissions are rejected (bad signature) over 10m."

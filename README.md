@@ -223,6 +223,15 @@ docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --
   `lb_submits_total{result=...}`, `lb_consumer_records_applied_total`). Caddy
   blocks `/metrics` publicly; Prometheus scrapes it over the internal network
   and is bound to `127.0.0.1:9090`.
+- **Dashboards & alerts** — Grafana (`127.0.0.1:3000`) is auto-provisioned with
+  the Prometheus datasource and an **OpenLeaderboard** dashboard (request rate,
+  read-latency p50/p95/p99, error ratio, submit outcomes, ingest throughput).
+  Prometheus loads `deploy/alerts.yml` and routes to Alertmanager
+  (`127.0.0.1:9093`). Shipped alerts: `LeaderboardTargetDown`,
+  `HighHTTPErrorRate`, `HighReadLatencyP99`, `ConsumerStalled`,
+  `HighSubmitRejectionRate`. Point the Alertmanager receiver in
+  `deploy/alertmanager.yml` at your Slack/PagerDuty/webhook to get notified.
+  Reach Grafana over an SSH tunnel: `ssh -L 3000:localhost:3000 user@host`.
 
 ## Deploying to AWS
 
