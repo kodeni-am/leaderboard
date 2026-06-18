@@ -1,0 +1,10 @@
+{
+  "name": "com.openleaderboard.sdk",
+  "version": "0.1.0",
+  "displayName": "OpenLeaderboard SDK",
+  "description": "Unity client for the OpenLeaderboard API: submit scores and query ranks, top-N, neighbors, and friend leaderboards.",
+  "unity": "2020.3",
+  "keywords": ["leaderboard", "gaming", "ranking", "api"],
+  "author": { "name": "OpenLeaderboard contributors" },
+  "license": "Apache-2.0"
+}
