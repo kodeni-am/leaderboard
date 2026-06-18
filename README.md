@@ -201,6 +201,29 @@ ElastiCache benchmark), showing read latency is essentially size-independent:
 p99 barely moves from 1k to 1M members — the O(log N) sorted-set property holds.
 Write throughput on the same box was ~91k best-wins submits/s into the 1M board.
 
+## Production on a VPS (no AWS)
+
+`deploy/docker-compose.prod.yml` runs the full stack on any Docker host:
+persistent Redis (AOF), `leaderboardd`, a **Caddy** reverse proxy with automatic
+HTTPS, and **Prometheus**.
+
+```bash
+cp deploy/.env.example deploy/.env     # set DOMAIN, ADMIN_TOKEN, ...
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
+```
+
+- **TLS** — Caddy obtains a real certificate for `$DOMAIN` automatically (use
+  `DOMAIN=localhost` for a local trial with Caddy's internal CA).
+- **Durability** — Redis runs with `appendonly yes` + `noeviction` and a named
+  volume, so the Streams log (the source of truth on a single VPS) survives
+  restarts. Point `REDIS_ADDR` at a managed/HA Redis to separate it from the
+  app box.
+- **Metrics** — `leaderboardd` exposes Prometheus metrics at `/metrics`
+  (`lb_http_requests_total`, `lb_http_request_duration_seconds`,
+  `lb_submits_total{result=...}`, `lb_consumer_records_applied_total`). Caddy
+  blocks `/metrics` publicly; Prometheus scrapes it over the internal network
+  and is bound to `127.0.0.1:9090`.
+
 ## Deploying to AWS
 
 `deploy/terraform` provisions ElastiCache (ranking tier), Kinesis (durable log),

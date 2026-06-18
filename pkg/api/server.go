@@ -16,6 +16,7 @@ import (
 	"github.com/araasr/leaderboard/pkg/tenancy"
 	"github.com/araasr/leaderboard/pkg/trust"
 	"github.com/araasr/leaderboard/pkg/window"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // Server wires the engine, ingestor, tenant store, and the in-memory board
@@ -50,23 +51,31 @@ func (s *Server) WarmRegistry(ctx context.Context) error {
 	return nil
 }
 
-// Handler returns the configured router.
+// Handler returns the configured router with Prometheus instrumentation.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", s.handleHealth)
-	mux.HandleFunc("POST /v1/apps", s.handleCreateApp) // admin-token protected
-
 	auth := tenancy.Authenticate(s.store)
-	authed := func(h http.HandlerFunc) http.Handler { return auth(h) }
 
-	mux.Handle("POST /v1/boards", authed(s.handleCreateBoard))
-	mux.Handle("GET /v1/boards", authed(s.handleListBoards))
-	mux.Handle("POST /v1/boards/{board}/scores", authed(s.handleSubmit))
-	mux.Handle("GET /v1/boards/{board}/rank", authed(s.handleRank))
-	mux.Handle("GET /v1/boards/{board}/top", authed(s.handleTop))
-	mux.Handle("GET /v1/boards/{board}/page", authed(s.handlePage))
-	mux.Handle("GET /v1/boards/{board}/neighbors", authed(s.handleNeighbors))
-	mux.Handle("POST /v1/boards/{board}/friends", authed(s.handleFriends))
+	// reg registers a handler wrapped with metrics under the pattern's route.
+	reg := func(pattern string, h http.Handler) {
+		mux.Handle(pattern, instrument(routeLabel(pattern), h))
+	}
+	regAuthed := func(pattern string, h http.HandlerFunc) {
+		reg(pattern, auth(h))
+	}
+
+	reg("GET /healthz", http.HandlerFunc(s.handleHealth))
+	reg("POST /v1/apps", http.HandlerFunc(s.handleCreateApp)) // admin-token protected
+	mux.Handle("GET /metrics", promhttp.Handler())            // scrape target; not instrumented
+
+	regAuthed("POST /v1/boards", s.handleCreateBoard)
+	regAuthed("GET /v1/boards", s.handleListBoards)
+	regAuthed("POST /v1/boards/{board}/scores", s.handleSubmit)
+	regAuthed("GET /v1/boards/{board}/rank", s.handleRank)
+	regAuthed("GET /v1/boards/{board}/top", s.handleTop)
+	regAuthed("GET /v1/boards/{board}/page", s.handlePage)
+	regAuthed("GET /v1/boards/{board}/neighbors", s.handleNeighbors)
+	regAuthed("POST /v1/boards/{board}/friends", s.handleFriends)
 	return mux
 }
 
@@ -240,6 +249,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.verifier != nil {
 		if err := s.verifier.Verify(req.Sig, req.TS, time.Now(), app.ID, board, req.Member, req.Score, req.Nonce); err != nil {
+			submitsTotal.WithLabelValues("rejected").Inc()
 			writeErr(w, http.StatusUnauthorized, err.Error())
 			return
 		}
@@ -249,18 +259,22 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		Time: req.Time, Segments: req.Segments, Idem: req.Idem,
 	})
 	if errors.Is(err, ingest.ErrUnknownBoard) {
+		submitsTotal.WithLabelValues("unknown_board").Inc()
 		writeErr(w, http.StatusNotFound, "unknown board")
 		return
 	}
 	if err != nil {
+		submitsTotal.WithLabelValues("error").Inc()
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if !accepted {
+		submitsTotal.WithLabelValues("duplicate").Inc()
 		writeJSON(w, http.StatusOK, map[string]any{"accepted": false, "duplicate": true})
 		return
 	}
 	// Write-behind: the score is durably logged and will be ranked shortly.
+	submitsTotal.WithLabelValues("accepted").Inc()
 	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true})
 }
 

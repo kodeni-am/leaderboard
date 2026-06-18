@@ -83,6 +83,7 @@ func main() {
 			Consumer:    getenv("HOSTNAME", "c-0"),
 			WorkerIndex: workerIdx,
 			WorkerCount: workerCnt,
+			OnConsumed:  api.RecordConsumerApplied,
 		})
 		if err := gc.EnsureGroups(ctx); err != nil {
 			log.Fatalf("ensure consumer groups: %v", err)

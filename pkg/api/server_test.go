@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -178,5 +179,44 @@ func TestAPIFullFlow(t *testing.T) {
 	resp, _ = h.do(t, http.MethodPost, "/v1/boards/ghost/scores", key, map[string]any{"member": "x", "score": 1})
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown board: got %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestMetricsEndpoint(t *testing.T) {
+	h := newHarness(t)
+
+	// Generate some traffic: create an app + board + a submit.
+	req, _ := http.NewRequest(http.MethodPost, h.ts.URL+"/v1/apps", bytes.NewReader([]byte(`{"name":"Metrics"}`)))
+	req.Header.Set("X-Admin-Token", "admin-secret")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var appResp createAppResp
+	json.NewDecoder(resp.Body).Decode(&appResp)
+	resp.Body.Close()
+	key := appResp.APIKey
+	h.do(t, http.MethodPost, "/v1/boards", key, map[string]any{"board": "m"})
+	h.do(t, http.MethodPost, "/v1/boards/m/scores", key, map[string]any{"member": "p", "score": 1})
+	t.Cleanup(func() {
+		_ = h.eng.Reset(context.Background(), engine.Board{Key: engine.BoardKey{App: appResp.ID, Board: "m", Segment: "all", Window: "all"}})
+	})
+
+	// Scrape /metrics (no auth) and check our metric families are present.
+	resp, body := h.do(t, http.MethodGet, "/metrics", "", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/metrics status %d", resp.StatusCode)
+	}
+	text := string(body)
+	for _, want := range []string{
+		"lb_http_requests_total",
+		"lb_http_request_duration_seconds",
+		"lb_submits_total",
+		`route="/v1/boards/{board}/scores"`,
+		`lb_submits_total{result="accepted"}`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("/metrics missing %q", want)
+		}
 	}
 }

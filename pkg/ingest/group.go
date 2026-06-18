@@ -32,6 +32,7 @@ type GroupConsumer struct {
 	block        time.Duration
 	appliedTTL   time.Duration
 	claimMinIdle time.Duration
+	onConsumed   func(int) // optional metrics hook, called with records handled
 }
 
 // GroupOptions configures a GroupConsumer.
@@ -44,6 +45,7 @@ type GroupOptions struct {
 	Block        time.Duration // XREADGROUP block time (default 2s)
 	AppliedTTL   time.Duration // TTL of idempotency markers (default 24h)
 	ClaimMinIdle time.Duration // min idle before reclaiming pending (default 30s)
+	OnConsumed   func(int)     // optional: called with the number of records handled
 }
 
 func NewGroupConsumer(log *RedisLog, resolver BoardResolver, eng engine.RankingEngine, opts GroupOptions) *GroupConsumer {
@@ -77,6 +79,7 @@ func NewGroupConsumer(log *RedisLog, resolver BoardResolver, eng engine.RankingE
 		block:        opts.Block,
 		appliedTTL:   opts.AppliedTTL,
 		claimMinIdle: opts.ClaimMinIdle,
+		onConsumed:   opts.OnConsumed,
 	}
 }
 
@@ -156,6 +159,9 @@ func (g *GroupConsumer) apply(ctx context.Context, stream string, msgs []redis.X
 	// 5. ACK everything we've handled.
 	if err := g.rdb.XAck(ctx, stream, g.group, allIDs...).Err(); err != nil {
 		return 0, err
+	}
+	if g.onConsumed != nil {
+		g.onConsumed(len(msgs))
 	}
 	return len(msgs), nil
 }

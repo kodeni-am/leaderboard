@@ -1,0 +1,84 @@
+# Production-on-a-VPS stack: persistent Redis + leaderboardd + Caddy (auto-TLS)
+# + Prometheus. No AWS required.
+#
+# Usage (from the repo root):
+#   cp deploy/.env.example deploy/.env && edit deploy/.env
+#   docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env up -d --build
+#
+# Caddy obtains a real certificate for $DOMAIN automatically. For a local trial
+# set DOMAIN=localhost (Caddy uses its internal CA).
+
+services:
+  redis:
+    image: redis:7-alpine
+    # AOF persistence: the ranking tier is rebuildable, but on a single VPS the
+    # Redis Streams log is the source of truth, so it must survive restarts.
+    # noeviction ensures the log/data is never dropped under memory pressure.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  leaderboardd:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      REDIS_ADDR: redis:6379
+      LISTEN_ADDR: ":8080"
+      LB_LOG_BACKEND: redis
+      INGEST_PARTITIONS: ${INGEST_PARTITIONS:-16}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in deploy/.env}
+      SIGNING_SECRET: ${SIGNING_SECRET:-}
+      LB_REAPER_RETAIN: ${LB_REAPER_RETAIN:-168h}
+    expose:
+      - "8080" # internal only; reached via Caddy
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in deploy/.env}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - leaderboardd
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090" # bound to localhost: not public
+    depends_on:
+      - leaderboardd
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  caddy-data:
+  caddy-config:
+  prom-data:

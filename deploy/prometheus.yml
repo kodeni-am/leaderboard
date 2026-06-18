@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: leaderboardd
+    # Scrapes the server's /metrics directly over the internal docker network
+    # (not through Caddy, which blocks /metrics publicly).
+    static_configs:
+      - targets: ["leaderboardd:8080"]
