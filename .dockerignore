@@ -1,0 +1,11 @@
+.git
+**/node_modules
+web/dist
+**/*.tsbuildinfo
+deploy/terraform/.terraform
+*.tfstate*
+bin
+*.test
+*.out
+.DS_Store
+docs

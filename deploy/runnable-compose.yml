@@ -1,0 +1,53 @@
+# OpenLeaderboard stack for Runnable (or any docker-compose host).
+#
+# Runnable supplies the public domain + automatic HTTPS via its own Caddy and
+# reverse-proxies to the web service. In Runnable's project settings:
+#   - enable compose mode, composeFile: deploy/runnable-compose.yml
+#   - composeService: leaderboardd   (the web service, port 8080)
+#   - set PUBLIC_URL to the assigned URL, plus SMTP_* for account email
+#
+# The leaderboardd image serves BOTH the dashboard SPA and the API on one
+# origin (WEB_DIR=/web baked into the image), so the session cookies work.
+services:
+  redis:
+    image: redis:7-alpine
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+  leaderboardd:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      REDIS_ADDR: redis:6379
+      LISTEN_ADDR: ":8080"
+      LB_LOG_BACKEND: redis
+      WEB_DIR: /web
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL to the app's public URL}
+      SECURE_COOKIES: "true"
+      LB_REAPER_RETAIN: "168h"
+      SIGNING_SECRET: ${SIGNING_SECRET:-}
+      # Account email (verification / reset). Point at your SMTP provider;
+      # without it, signups can't be verified.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@example.com}
+    expose:
+      - "8080"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  redis-data:

@@ -78,6 +78,10 @@ func main() {
 		srv.SetVerifier(trust.NewVerifier(signingKey, 5*time.Minute))
 		log.Print("HMAC submission verification: ENABLED")
 	}
+	if webDir := os.Getenv("WEB_DIR"); webDir != "" {
+		srv.SetStaticDir(webDir)
+		log.Printf("serving dashboard SPA from %s", webDir)
+	}
 	if err := srv.WarmRegistry(ctx); err != nil {
 		log.Fatalf("warm registry: %v", err)
 	}

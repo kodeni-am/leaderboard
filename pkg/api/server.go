@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/kodeni-am/leaderboard/pkg/accounts"
@@ -30,7 +33,13 @@ type Server struct {
 	accounts      *accounts.Service
 	secureCookies bool            // set Secure on auth cookies (true behind TLS)
 	verifier      *trust.Verifier // optional HMAC anti-cheat; nil disables
+	webDir        string          // if set, serve the SPA from this dir (same origin)
 }
+
+// SetStaticDir enables serving the built dashboard SPA from dir on the same
+// origin as the API (so a single container/host serves both). Unknown
+// non-API paths fall back to index.html for client-side routing.
+func (s *Server) SetStaticDir(dir string) { s.webDir = dir }
 
 func NewServer(eng engine.RankingEngine, ing *ingest.Ingestor, store tenancy.Store, registry *ingest.StaticRegistry, acct *accounts.Service, secureCookies bool) *Server {
 	return &Server{eng: eng, ing: ing, store: store, registry: registry, accounts: acct, secureCookies: secureCookies}
@@ -101,7 +110,34 @@ func (s *Server) Handler() http.Handler {
 	dataPlane("GET /v1/boards/{board}/page", s.handlePage)
 	dataPlane("GET /v1/boards/{board}/neighbors", s.handleNeighbors)
 	dataPlane("POST /v1/boards/{board}/friends", s.handleFriends)
+
+	// Serve the dashboard SPA from the same origin (catch-all, lowest priority).
+	if s.webDir != "" {
+		mux.Handle("/", instrument("/", s.staticFileHandler()))
+	}
 	return mux
+}
+
+// staticFileHandler serves the SPA from s.webDir: real files are served
+// directly, unknown non-API paths fall back to index.html (client-side
+// routing), and unmatched API paths get a JSON 404 rather than HTML.
+func (s *Server) staticFileHandler() http.Handler {
+	fs := http.FileServer(http.Dir(s.webDir))
+	index := filepath.Join(s.webDir, "index.html")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if strings.HasPrefix(p, "/v1/") || strings.HasPrefix(p, "/auth/") || p == "/metrics" || p == "/healthz" {
+			writeErr(w, http.StatusNotFound, "not found")
+			return
+		}
+		if p != "/" {
+			if st, err := os.Stat(filepath.Join(s.webDir, filepath.Clean(p))); err == nil && !st.IsDir() {
+				fs.ServeHTTP(w, r)
+				return
+			}
+		}
+		http.ServeFile(w, r, index)
+	})
 }
 
 // --- helpers ---
