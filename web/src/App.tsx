@@ -7,6 +7,7 @@ import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import Forgot from "./pages/Forgot";
 import Reset from "./pages/Reset";
+import Docs from "./pages/Docs";
 import Dashboard from "./pages/Dashboard";
 
 function Protected({ children }: { children: ReactElement }) {
@@ -24,6 +25,7 @@ export default function App() {
       <Route path="/signup" element={<Signup />} />
       <Route path="/forgot" element={<Forgot />} />
       <Route path="/reset" element={<Reset />} />
+      <Route path="/docs" element={<Docs />} />
       <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

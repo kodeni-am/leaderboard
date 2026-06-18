@@ -8,6 +8,7 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
+  const [info, setInfo] = useState("");
   const [unverified, setUnverified] = useState(false);
   const [busy, setBusy] = useState(false);
   const [params] = useSearchParams();
@@ -42,11 +43,12 @@ export default function Login() {
     >
       {verified === "1" && <div className="notice ok">Email verified — you can sign in now.</div>}
       {verified === "0" && <div className="notice err">That verification link is invalid or expired.</div>}
+      {info && <div className="notice ok">{info}</div>}
       {err && <div className="notice err">{err}</div>}
       {unverified && (
         <div className="notice err">
           Email not verified. Check your inbox, or{" "}
-          <a href="#" onClick={(ev) => { ev.preventDefault(); void api.resend(email); setUnverified(false); setErr("Verification email re-sent."); }}>
+          <a href="#" onClick={(ev) => { ev.preventDefault(); void api.resend(email); setUnverified(false); setErr(""); setInfo("Verification email re-sent — check your inbox."); }}>
             resend it
           </a>.
         </div>

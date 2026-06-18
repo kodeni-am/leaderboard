@@ -44,9 +44,10 @@ export default function Landing() {
   return (
     <div style={{ position: "relative", zIndex: 2 }}>
       {/* nav */}
-      <nav className="container spread" style={{ height: 72 }}>
+      <nav className="container spread site-nav" style={{ minHeight: 72 }}>
         <Logo />
-        <div className="row" style={{ gap: 20 }}>
+        <div className="row nav-links" style={{ gap: 20 }}>
+          <Link to="/docs" className="dim mono" style={{ fontSize: 13, letterSpacing: "0.04em" }}>DOCS</Link>
           <a href={GITHUB} className="dim mono" style={{ fontSize: 13, letterSpacing: "0.04em" }}>GITHUB ↗</a>
           {user ? (
             <Link to="/dashboard" className="btn btn-sm">Dashboard</Link>
@@ -60,7 +61,7 @@ export default function Landing() {
       </nav>
 
       {/* hero */}
-      <section className="container" style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 56, alignItems: "center", padding: "60px 24px 72px" }}>
+      <section className="container hero-grid" style={{ padding: "60px 24px 72px" }}>
         <div className="reveal">
           <div className="tag" style={{ marginBottom: 22 }}>OPEN SOURCE · APACHE-2.0</div>
           <h1 style={{ fontSize: "clamp(38px, 5.2vw, 66px)", lineHeight: 0.98 }}>
@@ -109,7 +110,7 @@ export default function Landing() {
 
       {/* stat strip */}
       <section className="container">
-        <div className="panel" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", padding: 0 }}>
+        <div className="panel stat-grid" style={{ padding: 0 }}>
           {stats.map((s, i) => (
             <div key={s.l} style={{ padding: "26px 22px", borderLeft: i ? "1px solid var(--line)" : "none" }}>
               <div className="mono accent" style={{ fontSize: 30, fontWeight: 700 }}>{s.v}</div>
@@ -128,7 +129,7 @@ export default function Landing() {
         <h2 style={{ fontSize: 34, marginTop: 12, marginBottom: 36, maxWidth: 640 }}>
           The hard part is staying instant <span className="dim">as the board grows.</span>
         </h2>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }}>
+        <div className="feat-grid">
           {features.map((f) => (
             <div key={f.k} className="panel" style={{ borderTop: "2px solid var(--accent)" }}>
               <div className="mono accent" style={{ fontSize: 13, letterSpacing: "0.1em" }}>{f.k}</div>
@@ -151,7 +152,7 @@ export default function Landing() {
 
       {/* quickstart */}
       <section className="container" style={{ padding: "40px 24px 80px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "0.8fr 1.2fr", gap: 40, alignItems: "center" }}>
+        <div className="qs-grid">
           <div>
             <div className="eyebrow">QUICKSTART</div>
             <h2 style={{ fontSize: 30, margin: "12px 0 14px" }}>Ten lines to your first rank.</h2>
@@ -178,7 +179,10 @@ const top = await lb.getTop("high", 10);
         <div className="container spread" style={{ padding: "26px 24px", flexWrap: "wrap", gap: 14 }}>
           <Logo />
           <span className="dim mono" style={{ fontSize: 12 }}>Apache-2.0 · self-host or hosted · no lock-in</span>
-          <a href={GITHUB} className="mono" style={{ fontSize: 12, letterSpacing: "0.04em" }}>GITHUB ↗</a>
+          <span className="row" style={{ gap: 18 }}>
+            <Link to="/docs" className="mono" style={{ fontSize: 12, letterSpacing: "0.04em" }}>DOCS</Link>
+            <a href={GITHUB} className="mono" style={{ fontSize: 12, letterSpacing: "0.04em" }}>GITHUB ↗</a>
+          </span>
         </div>
       </footer>
     </div>

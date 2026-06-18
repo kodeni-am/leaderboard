@@ -159,7 +159,7 @@ function AppWorkspace({ appId }: { appId: string }) {
   }, [appId]);
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: 18, alignItems: "start" }}>
+    <div className="dash-grid">
       <div className="stack-sm">
         {err && <div className="notice err">{err}</div>}
         <BoardCreator appId={appId} onCreated={loadBoards} />
@@ -331,7 +331,7 @@ function TestSubmit({ board, busy, onSubmit }: { appId: string; board: string; b
   const [score, setScore] = useState("");
   return (
     <form
-      className="panel row"
+      className="panel row collapse"
       style={{ gap: 10, alignItems: "flex-end" }}
       onSubmit={(e) => { e.preventDefault(); if (member && score !== "") onSubmit(member, Number(score)); }}
     >
@@ -365,7 +365,7 @@ function RankSearch({ appId, board }: { appId: string; board: string }) {
   }
 
   return (
-    <form className="panel row" style={{ gap: 10, alignItems: "flex-end" }} onSubmit={search}>
+    <form className="panel row collapse" style={{ gap: 10, alignItems: "flex-end" }} onSubmit={search}>
       <label className="field" style={{ margin: 0, flex: 1 }}>
         <span>Look up a player’s rank</span>
         <input value={member} onChange={(e) => setMember(e.target.value)} placeholder="player-1" />
