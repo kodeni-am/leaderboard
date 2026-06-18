@@ -123,6 +123,7 @@ All query endpoints accept `segment=` and `window=` (a literal id like
 | `pkg/trust` | SP7 | HMAC submission verification |
 | `pkg/sdk` | SP8 | Reference Go client |
 | `sdk/unity` | SP8 | Unity/C# client SDK (UPM package, async/await) |
+| `sdk/typescript` | SP8 | TypeScript client SDK (browser + Node 18+) |
 | `cmd/leaderboardd` | — | The server binary |
 | `deploy/terraform` | SP6 | AWS reference architecture (scaffold) |
 
