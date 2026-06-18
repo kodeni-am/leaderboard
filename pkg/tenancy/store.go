@@ -17,21 +17,24 @@ var (
 	ErrInvalidKey    = errors.New("tenancy: invalid api key")
 )
 
-// App is a tenant. The plaintext API key is shown once at creation and never
-// stored — only its hash is persisted.
+// App is a tenant, owned by a dashboard user. The plaintext API key is shown
+// once at creation and never stored — only its hash is persisted.
 type App struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	OwnerUserID string    `json:"owner_user_id,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // Store persists tenants and their board definitions.
 type Store interface {
-	// CreateApp registers a new tenant and returns it plus the one-time
-	// plaintext API key.
-	CreateApp(ctx context.Context, name string) (App, string, error)
+	// CreateApp registers a new tenant owned by ownerUserID and returns it plus
+	// the one-time plaintext API key.
+	CreateApp(ctx context.Context, ownerUserID, name string) (App, string, error)
 	// GetApp looks up a tenant by id.
 	GetApp(ctx context.Context, id string) (App, error)
+	// ListApps returns all apps owned by a user.
+	ListApps(ctx context.Context, ownerUserID string) ([]App, error)
 	// AppByKey authenticates a plaintext API key to its owning tenant.
 	AppByKey(ctx context.Context, plaintextKey string) (App, error)
 

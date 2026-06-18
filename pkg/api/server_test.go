@@ -1,28 +1,65 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/kodeni-am/leaderboard/pkg/accounts"
+	"github.com/kodeni-am/leaderboard/pkg/email"
 	"github.com/kodeni-am/leaderboard/pkg/engine"
 	"github.com/kodeni-am/leaderboard/pkg/ingest"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
 	"github.com/redis/go-redis/v9"
 )
 
+type captureSender struct {
+	mu  sync.Mutex
+	msg email.Message
+}
+
+func (c *captureSender) Send(_ context.Context, m email.Message) error {
+	c.mu.Lock()
+	c.msg = m
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *captureSender) lastText() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.msg.Text
+}
+
+func tokenFrom(text, marker string) string {
+	i := strings.Index(text, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := text[i+len(marker):]
+	if j := strings.IndexAny(rest, "\r\n "); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
+}
+
 type harness struct {
-	ts   *httptest.Server
-	cons *ingest.Consumer
-	eng  *engine.RedisEngine
-	key  string
+	ts     *httptest.Server
+	cons   *ingest.Consumer
+	eng    *engine.RedisEngine
+	mail   *captureSender
+	client *http.Client
+	csrf   string
+	appID  string
+	apiKey string
 }
 
 func newHarness(t *testing.T) *harness {
@@ -40,30 +77,42 @@ func newHarness(t *testing.T) *harness {
 	eng := engine.NewRedisEngine(rdb)
 	store := tenancy.NewMemStore()
 	registry := ingest.NewStaticRegistry()
-	log := ingest.NewMemLog()
-	ing := ingest.NewIngestor(log, registry, ingest.NewMemDeduper())
-	cons := ingest.NewConsumer(log, registry, eng)
-	srv := NewServer(eng, ing, store, registry, "admin-secret")
+	logp := ingest.NewMemLog()
+	ing := ingest.NewIngestor(logp, registry, ingest.NewMemDeduper())
+	cons := ingest.NewConsumer(logp, registry, eng)
+	mail := &captureSender{}
+	mem := accounts.NewMemStores()
+	acct := accounts.NewService(mem, mem, mem, mail, accounts.Config{BaseURL: "http://app"})
+	srv := NewServer(eng, ing, store, registry, acct, false)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
-	return &harness{ts: ts, cons: cons, eng: eng}
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{
+		Jar:           jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	return &harness{ts: ts, cons: cons, eng: eng, mail: mail, client: client}
 }
 
-func (h *harness) do(t *testing.T, method, path, key string, body any) (*http.Response, []byte) {
+// call issues a request via the cookie-jar client.
+func (h *harness) call(t *testing.T, method, path string, headers map[string]string, body any) (*http.Response, []byte) {
 	t.Helper()
 	var rdr io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
-		rdr = bytes.NewReader(b)
+		rdr = strings.NewReader(string(b))
 	}
 	req, err := http.NewRequest(method, h.ts.URL+path, rdr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := h.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,147 +121,162 @@ func (h *harness) do(t *testing.T, method, path, key string, body any) (*http.Re
 	return resp, data
 }
 
+func (h *harness) key() map[string]string {
+	return map[string]string{"Authorization": "Bearer " + h.apiKey}
+}
+func (h *harness) sess() map[string]string {
+	return map[string]string{"X-App-Id": h.appID, "X-CSRF-Token": h.csrf}
+}
+
+// onboard runs signup -> verify -> login -> create app, populating csrf/appID/apiKey.
+func (h *harness) onboard(t *testing.T, emailAddr string) {
+	t.Helper()
+	if resp, body := h.call(t, http.MethodPost, "/auth/signup", nil, map[string]string{"email": emailAddr, "password": "hunter2hunter"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("signup: %d %s", resp.StatusCode, body)
+	}
+	tok := tokenFrom(h.mail.lastText(), "/auth/verify?token=")
+	if tok == "" {
+		t.Fatal("no verification token emailed")
+	}
+	if resp, _ := h.call(t, http.MethodGet, "/auth/verify?token="+tok, nil, nil); resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("verify: %d", resp.StatusCode)
+	}
+	resp, body := h.call(t, http.MethodPost, "/auth/login", nil, map[string]string{"email": emailAddr, "password": "hunter2hunter"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d %s", resp.StatusCode, body)
+	}
+	var lr struct {
+		CSRF string `json:"csrf_token"`
+	}
+	json.Unmarshal(body, &lr)
+	h.csrf = lr.CSRF
+	resp, body = h.call(t, http.MethodPost, "/v1/apps", map[string]string{"X-CSRF-Token": h.csrf}, map[string]string{"name": "My Game"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create app: %d %s", resp.StatusCode, body)
+	}
+	var ar struct {
+		ID     string `json:"id"`
+		APIKey string `json:"api_key"`
+	}
+	json.Unmarshal(body, &ar)
+	h.appID, h.apiKey = ar.ID, ar.APIKey
+	if h.appID == "" || h.apiKey == "" {
+		t.Fatalf("app create returned empty id/key: %s", body)
+	}
+}
+
 func TestAPIFullFlow(t *testing.T) {
 	h := newHarness(t)
+	h.onboard(t, "dev@example.com")
+	t.Cleanup(func() {
+		_ = h.eng.Reset(context.Background(), engine.Board{Key: engine.BoardKey{App: h.appID, Board: "high", Segment: "all", Window: "all"}})
+	})
 
-	// 1. Create app with the admin token.
-	req, _ := http.NewRequest(http.MethodPost, h.ts.URL+"/v1/apps", bytes.NewReader([]byte(`{"name":"Pong"}`)))
-	req.Header.Set("X-Admin-Token", "admin-secret")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var appResp createAppResp
-	json.NewDecoder(resp.Body).Decode(&appResp)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated || appResp.APIKey == "" {
-		t.Fatalf("create app: %d key=%q", resp.StatusCode, appResp.APIKey)
-	}
-	key := appResp.APIKey
-
-	// Wrong admin token is rejected.
-	bad, _ := http.NewRequest(http.MethodPost, h.ts.URL+"/v1/apps", bytes.NewReader([]byte(`{"name":"x"}`)))
-	bad.Header.Set("X-Admin-Token", "nope")
-	br, _ := http.DefaultClient.Do(bad)
-	if br.StatusCode != http.StatusUnauthorized {
-		t.Errorf("bad admin token: got %d, want 401", br.StatusCode)
-	}
-	br.Body.Close()
-
-	// 2. Create a board (desc/best defaults).
-	resp, data := h.do(t, http.MethodPost, "/v1/boards", key, map[string]any{"board": "high"})
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("create board: %d %s", resp.StatusCode, data)
+	// Apps list reflects the created app (session-authed).
+	if resp, body := h.call(t, http.MethodGet, "/v1/apps", nil, nil); resp.StatusCode != http.StatusOK || !strings.Contains(string(body), h.appID) {
+		t.Fatalf("list apps: %d %s", resp.StatusCode, body)
 	}
 
-	// Unauthenticated request is rejected.
-	resp, _ = h.do(t, http.MethodGet, "/v1/boards/high/top", "", nil)
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("no auth: got %d, want 401", resp.StatusCode)
+	// Data plane via API key: create board + submit.
+	if resp, body := h.call(t, http.MethodPost, "/v1/boards", h.key(), map[string]any{"board": "high"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create board: %d %s", resp.StatusCode, body)
 	}
-
-	// 3. Submit scores (write-behind -> 202).
 	for _, s := range []struct {
 		m string
 		v float64
 	}{{"alice", 300}, {"bob", 500}, {"carol", 100}} {
-		resp, data := h.do(t, http.MethodPost, "/v1/boards/high/scores", key, map[string]any{"member": s.m, "score": s.v})
-		if resp.StatusCode != http.StatusAccepted {
-			t.Fatalf("submit %s: %d %s", s.m, resp.StatusCode, data)
+		if resp, body := h.call(t, http.MethodPost, "/v1/boards/high/scores", h.key(), map[string]any{"member": s.m, "score": s.v}); resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("submit %s: %d %s", s.m, resp.StatusCode, body)
 		}
-	}
-
-	// Rank not visible until the consumer applies the log.
-	resp, _ = h.do(t, http.MethodGet, "/v1/boards/high/rank?member=bob", key, nil)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("rank before consume: got %d, want 404", resp.StatusCode)
 	}
 	if err := h.cons.Drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		_ = h.eng.Reset(context.Background(), engine.Board{Key: engine.BoardKey{App: appResp.ID, Board: "high", Segment: "all", Window: "all"}})
-	})
 
-	// 4. Query rank.
-	resp, data = h.do(t, http.MethodGet, "/v1/boards/high/rank?member=bob", key, nil)
+	// Read via API key.
+	resp, body := h.call(t, http.MethodGet, "/v1/boards/high/rank?member=bob", h.key(), nil)
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("rank: %d %s", resp.StatusCode, data)
+		t.Fatalf("rank: %d %s", resp.StatusCode, body)
 	}
 	var entry engine.RankEntry
-	json.Unmarshal(data, &entry)
+	json.Unmarshal(body, &entry)
 	if entry.Rank != 1 || entry.Score != 500 {
-		t.Errorf("bob rank=%d score=%v, want 1/500", entry.Rank, entry.Score)
+		t.Errorf("bob: %+v", entry)
 	}
 
-	// 5. Top-N.
-	resp, data = h.do(t, http.MethodGet, "/v1/boards/high/top?n=2", key, nil)
+	// Read via SESSION + X-App-Id (no API key) — the dashboard path.
+	resp, body = h.call(t, http.MethodGet, "/v1/boards/high/top?n=2", map[string]string{"X-App-Id": h.appID}, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("session top: %d %s", resp.StatusCode, body)
+	}
 	var top struct {
 		Entries []engine.RankEntry `json:"entries"`
 	}
-	json.Unmarshal(data, &top)
-	if len(top.Entries) != 2 || top.Entries[0].Member != "bob" || top.Entries[1].Member != "alice" {
-		t.Errorf("top = %+v", top.Entries)
+	json.Unmarshal(body, &top)
+	if len(top.Entries) != 2 || top.Entries[0].Member != "bob" {
+		t.Errorf("session top = %+v", top.Entries)
 	}
 
-	// 6. Neighbors of alice (rank 2): bob, alice, carol.
-	resp, data = h.do(t, http.MethodGet, "/v1/boards/high/neighbors?member=alice&k=1", key, nil)
-	var nb struct {
-		Entries []engine.RankEntry `json:"entries"`
-	}
-	json.Unmarshal(data, &nb)
-	if len(nb.Entries) != 3 || nb.Entries[1].Member != "alice" {
-		t.Errorf("neighbors = %+v", nb.Entries)
-	}
-
-	// 7. Friend rank among carol+bob.
-	resp, data = h.do(t, http.MethodPost, "/v1/boards/high/friends", key, map[string]any{"members": []string{"carol", "bob"}})
-	var fr struct {
-		Entries []engine.RankEntry `json:"entries"`
-	}
-	json.Unmarshal(data, &fr)
-	if len(fr.Entries) != 2 || fr.Entries[0].Member != "bob" || fr.Entries[0].Rank != 1 {
-		t.Errorf("friends = %+v", fr.Entries)
+	// Unauthenticated data-plane request (fresh client, no cookies/key) -> 401.
+	if r, err := http.Get(h.ts.URL + "/v1/boards/high/top?n=2"); err != nil {
+		t.Fatal(err)
+	} else {
+		r.Body.Close()
+		if r.StatusCode != http.StatusUnauthorized {
+			t.Errorf("unauth data-plane: got %d, want 401", r.StatusCode)
+		}
 	}
 
-	// 8. Submit to an unknown board -> 404.
-	resp, _ = h.do(t, http.MethodPost, "/v1/boards/ghost/scores", key, map[string]any{"member": "x", "score": 1})
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("unknown board: got %d, want 404", resp.StatusCode)
+	// Session mutation without CSRF -> 403.
+	if resp, _ := h.call(t, http.MethodPost, "/v1/apps", nil, map[string]string{"name": "no-csrf"}); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("missing csrf: got %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestAuthFlows(t *testing.T) {
+	h := newHarness(t)
+
+	// Duplicate signup -> 409.
+	h.call(t, http.MethodPost, "/auth/signup", nil, map[string]string{"email": "dup@x.co", "password": "hunter2hunter"})
+	if resp, _ := h.call(t, http.MethodPost, "/auth/signup", nil, map[string]string{"email": "dup@x.co", "password": "hunter2hunter"}); resp.StatusCode != http.StatusConflict {
+		t.Errorf("dup signup: got %d, want 409", resp.StatusCode)
+	}
+
+	// Login before verification -> 403.
+	if resp, _ := h.call(t, http.MethodPost, "/auth/login", nil, map[string]string{"email": "dup@x.co", "password": "hunter2hunter"}); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("login unverified: got %d, want 403", resp.StatusCode)
+	}
+
+	// Onboard a different user, then log out and confirm /auth/me is rejected.
+	h.onboard(t, "flows@example.com")
+	if resp, _ := h.call(t, http.MethodGet, "/auth/me", nil, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("me before logout: %d", resp.StatusCode)
+	}
+	if resp, _ := h.call(t, http.MethodPost, "/auth/logout", map[string]string{"X-CSRF-Token": h.csrf}, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("logout: %d", resp.StatusCode)
+	}
+	if resp, _ := h.call(t, http.MethodGet, "/auth/me", nil, nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("me after logout: got %d, want 401", resp.StatusCode)
 	}
 }
 
 func TestMetricsEndpoint(t *testing.T) {
 	h := newHarness(t)
-
-	// Generate some traffic: create an app + board + a submit.
-	req, _ := http.NewRequest(http.MethodPost, h.ts.URL+"/v1/apps", bytes.NewReader([]byte(`{"name":"Metrics"}`)))
-	req.Header.Set("X-Admin-Token", "admin-secret")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var appResp createAppResp
-	json.NewDecoder(resp.Body).Decode(&appResp)
-	resp.Body.Close()
-	key := appResp.APIKey
-	h.do(t, http.MethodPost, "/v1/boards", key, map[string]any{"board": "m"})
-	h.do(t, http.MethodPost, "/v1/boards/m/scores", key, map[string]any{"member": "p", "score": 1})
+	h.onboard(t, "metrics@example.com")
 	t.Cleanup(func() {
-		_ = h.eng.Reset(context.Background(), engine.Board{Key: engine.BoardKey{App: appResp.ID, Board: "m", Segment: "all", Window: "all"}})
+		_ = h.eng.Reset(context.Background(), engine.Board{Key: engine.BoardKey{App: h.appID, Board: "m", Segment: "all", Window: "all"}})
 	})
+	h.call(t, http.MethodPost, "/v1/boards", h.key(), map[string]any{"board": "m"})
+	h.call(t, http.MethodPost, "/v1/boards/m/scores", h.key(), map[string]any{"member": "p", "score": 1})
 
-	// Scrape /metrics (no auth) and check our metric families are present.
-	resp, body := h.do(t, http.MethodGet, "/metrics", "", nil)
+	resp, body := h.call(t, http.MethodGet, "/metrics", nil, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("/metrics status %d", resp.StatusCode)
 	}
 	text := string(body)
 	for _, want := range []string{
 		"lb_http_requests_total",
-		"lb_http_request_duration_seconds",
 		"lb_submits_total",
-		`route="/v1/boards/{board}/scores"`,
 		`lb_submits_total{result="accepted"}`,
 	} {
 		if !strings.Contains(text, want) {

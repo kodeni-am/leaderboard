@@ -1,10 +1,12 @@
 // End-to-end test of the TS SDK against a running leaderboardd.
-// Requires the server up (e.g. `docker compose up -d leaderboardd`) with
-// ADMIN_TOKEN. Run after `npm run build`.
+// Requires the server up (e.g. `docker compose up -d leaderboardd`) and an
+// app API key in LB_API_KEY. Run after `npm run build`.
 import { LeaderboardClient, NotFoundError } from "../dist/index.js";
 
 const BASE = process.env.BASE ?? "http://localhost:8080";
-const ADMIN = process.env.ADMIN_TOKEN ?? "dev-admin-token";
+// App creation requires a logged-in account; create an app in the dashboard
+// (or via the signup/login API) and pass its API key here.
+const KEY = process.env.LB_API_KEY;
 
 function assert(cond, msg) {
   if (!cond) {
@@ -13,16 +15,12 @@ function assert(cond, msg) {
   }
 }
 
-// Provision an app (admin op, not part of the client SDK).
-const appResp = await fetch(`${BASE}/v1/apps`, {
-  method: "POST",
-  headers: { "X-Admin-Token": ADMIN, "Content-Type": "application/json" },
-  body: JSON.stringify({ name: "ts-sdk-e2e" }),
-});
-assert(appResp.status === 201, `create app -> ${appResp.status}`);
-const { api_key } = await appResp.json();
+if (!KEY) {
+  console.log("SKIP: set LB_API_KEY=<an app's API key> to run the e2e test.");
+  process.exit(0);
+}
 
-const lb = new LeaderboardClient(BASE, api_key);
+const lb = new LeaderboardClient(BASE, KEY);
 
 await lb.createBoard("high", { sortOrder: "desc", updatePolicy: "best" });
 

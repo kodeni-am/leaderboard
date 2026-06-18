@@ -25,6 +25,14 @@ services:
       redis:
         condition: service_healthy
 
+  # Local mail catcher (Mailpit) — verification/reset emails land here.
+  # Web UI + API: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
   # The leaderboard server (built from this repo).
   leaderboardd:
     build:
@@ -34,14 +42,19 @@ services:
       REDIS_ADDR: redis:6379
       LISTEN_ADDR: ":8080"
       LB_LOG_BACKEND: redis
-      ADMIN_TOKEN: dev-admin-token
       LB_REAPER_RETAIN: 168h
       SIGNING_SECRET: ${SIGNING_SECRET:-}
+      PUBLIC_URL: http://localhost:8080
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_FROM: no-reply@openleaderboard.local
     ports:
       - "8080:8080"
     depends_on:
       redis:
         condition: service_healthy
+      mailpit:
+        condition: service_started
 
 volumes:
   gomod:

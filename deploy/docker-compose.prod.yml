@@ -40,7 +40,13 @@ services:
       LISTEN_ADDR: ":8080"
       LB_LOG_BACKEND: redis
       INGEST_PARTITIONS: ${INGEST_PARTITIONS:-16}
-      ADMIN_TOKEN: ${ADMIN_TOKEN:?set ADMIN_TOKEN in deploy/.env}
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL in deploy/.env}
+      SECURE_COOKIES: ${SECURE_COOKIES:-true}
+      SMTP_HOST: ${SMTP_HOST:?set SMTP_HOST in deploy/.env}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-no-reply@example.com}
       SIGNING_SECRET: ${SIGNING_SECRET:-}
       LB_REAPER_RETAIN: ${LB_REAPER_RETAIN:-168h}
     expose:

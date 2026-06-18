@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -16,12 +17,23 @@ import (
 // storeContract exercises a Store implementation end to end.
 func storeContract(t *testing.T, s Store) {
 	ctx := context.Background()
-	app, key, err := s.CreateApp(ctx, "Pong")
+	// Unique owner per run so the shared Redis store doesn't accumulate apps
+	// across test runs.
+	owner := "usr_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	app, key, err := s.CreateApp(ctx, owner, "Pong")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if app.ID == "" || key == "" {
-		t.Fatal("empty app id or key")
+	if app.ID == "" || key == "" || app.OwnerUserID != owner {
+		t.Fatalf("unexpected app: %+v key=%q", app, key)
+	}
+	// Owner scoping.
+	owned, err := s.ListApps(ctx, owner)
+	if err != nil || len(owned) != 1 || owned[0].ID != app.ID {
+		t.Fatalf("ListApps(owner): %v / %v", owned, err)
+	}
+	if other, _ := s.ListApps(ctx, owner+"_nobody"); len(other) != 0 {
+		t.Errorf("ListApps(other) should be empty, got %v", other)
 	}
 	// Auth with the plaintext key resolves the app; a wrong key fails.
 	got, err := s.AppByKey(ctx, key)
@@ -87,7 +99,7 @@ func TestRedisStoreContract(t *testing.T) {
 func TestAuthMiddleware(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemStore()
-	_, key, _ := s.CreateApp(ctx, "Game")
+	_, key, _ := s.CreateApp(ctx, "usr_game", "Game")
 
 	var sawApp App
 	handler := Authenticate(s)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

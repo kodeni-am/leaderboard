@@ -26,7 +26,7 @@ func NewMemStore() *MemStore {
 	}
 }
 
-func (s *MemStore) CreateApp(_ context.Context, name string) (App, string, error) {
+func (s *MemStore) CreateApp(_ context.Context, ownerUserID, name string) (App, string, error) {
 	id, err := newID("app_")
 	if err != nil {
 		return App{}, "", err
@@ -35,13 +35,25 @@ func (s *MemStore) CreateApp(_ context.Context, name string) (App, string, error
 	if err != nil {
 		return App{}, "", err
 	}
-	app := App{ID: id, Name: name, CreatedAt: s.now()}
+	app := App{ID: id, Name: name, OwnerUserID: ownerUserID, CreatedAt: s.now()}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.apps[id] = app
 	s.keyIndex[hash] = id
 	s.boards[id] = map[string]engine.LogicalBoard{}
 	return app, plain, nil
+}
+
+func (s *MemStore) ListApps(_ context.Context, ownerUserID string) ([]App, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []App
+	for _, a := range s.apps {
+		if a.OwnerUserID == ownerUserID {
+			out = append(out, a)
+		}
+	}
+	return out, nil
 }
 
 func (s *MemStore) GetApp(_ context.Context, id string) (App, error) {

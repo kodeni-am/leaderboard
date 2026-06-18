@@ -65,5 +65,5 @@ const lb = new LeaderboardClient(url, key, { appId, signingSecret }); // backend
 npm run typecheck
 npm run build
 npm run test:hmac        # offline HMAC cross-check
-npm run test:e2e         # against a running server (ADMIN_TOKEN env)
+npm run test:e2e         # against a running server (LB_API_KEY env)
 ```

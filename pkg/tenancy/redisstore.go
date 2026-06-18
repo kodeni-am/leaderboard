@@ -19,13 +19,14 @@ type RedisStore struct {
 
 func NewRedisStore(rdb redis.UniversalClient) *RedisStore { return &RedisStore{rdb: rdb} }
 
-func appKey(id string) string       { return "ten:app:" + id }
-func apiKeyKey(hash string) string  { return "ten:key:" + hash }
-func boardKey(app, b string) string { return "ten:board:" + app + ":" + b }
-func boardSetKey(app string) string { return "ten:boards:" + app }
-func appSetKey() string             { return "ten:apps" }
+func appKey(id string) string        { return "ten:app:" + id }
+func apiKeyKey(hash string) string   { return "ten:key:" + hash }
+func boardKey(app, b string) string  { return "ten:board:" + app + ":" + b }
+func boardSetKey(app string) string  { return "ten:boards:" + app }
+func appSetKey() string              { return "ten:apps" }
+func ownerAppsKey(uid string) string { return "ten:owner:" + uid }
 
-func (s *RedisStore) CreateApp(ctx context.Context, name string) (App, string, error) {
+func (s *RedisStore) CreateApp(ctx context.Context, ownerUserID, name string) (App, string, error) {
 	id, err := newID("app_")
 	if err != nil {
 		return App{}, "", err
@@ -34,16 +35,38 @@ func (s *RedisStore) CreateApp(ctx context.Context, name string) (App, string, e
 	if err != nil {
 		return App{}, "", err
 	}
-	app := App{ID: id, Name: name, CreatedAt: time.Now().UTC()}
+	app := App{ID: id, Name: name, OwnerUserID: ownerUserID, CreatedAt: time.Now().UTC()}
 	data, _ := json.Marshal(app)
 	pipe := s.rdb.TxPipeline()
 	pipe.Set(ctx, appKey(id), data, 0)
 	pipe.Set(ctx, apiKeyKey(hash), id, 0)
 	pipe.SAdd(ctx, appSetKey(), id)
+	if ownerUserID != "" {
+		pipe.SAdd(ctx, ownerAppsKey(ownerUserID), id)
+	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return App{}, "", err
 	}
 	return app, plain, nil
+}
+
+func (s *RedisStore) ListApps(ctx context.Context, ownerUserID string) ([]App, error) {
+	ids, err := s.rdb.SMembers(ctx, ownerAppsKey(ownerUserID)).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]App, 0, len(ids))
+	for _, id := range ids {
+		app, err := s.GetApp(ctx, id)
+		if err == ErrAppNotFound {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, app)
+	}
+	return out, nil
 }
 
 func (s *RedisStore) GetApp(ctx context.Context, id string) (App, error) {

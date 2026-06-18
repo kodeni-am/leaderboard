@@ -15,10 +15,39 @@ variable "image" {
   type        = string
 }
 
-variable "admin_token" {
-  description = "Admin token for app creation (store in Secrets Manager in production)"
+variable "public_url" {
+  description = "Public origin for account email links/cookies (e.g. https://lb.example.com)"
   type        = string
+}
+
+variable "smtp_host" {
+  description = "SMTP host for account verification / password-reset email"
+  type        = string
+}
+
+variable "smtp_port" {
+  description = "SMTP port"
+  type        = number
+  default     = 587
+}
+
+variable "smtp_user" {
+  description = "SMTP username"
+  type        = string
+  default     = ""
+}
+
+variable "smtp_pass" {
+  description = "SMTP password (store in Secrets Manager in production)"
+  type        = string
+  default     = ""
   sensitive   = true
+}
+
+variable "smtp_from" {
+  description = "From address for transactional email"
+  type        = string
+  default     = "no-reply@example.com"
 }
 
 variable "signing_secret" {
