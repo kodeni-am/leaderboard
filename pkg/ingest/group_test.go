@@ -188,6 +188,35 @@ func TestGroupReclaimRecoversCrashedWorker(t *testing.T) {
 	}
 }
 
+func TestGroupSelfHealsMissingGroup(t *testing.T) {
+	ctx := context.Background()
+	log, eng, reg, app := groupHarness(t, 1, engine.BoardConfig{})
+	rec := Record{App: app, Board: "b", Member: "phoenix", Score: 42}
+	if err := log.Append(ctx, &rec); err != nil {
+		t.Fatal(err)
+	}
+	gc := NewGroupConsumer(log, reg, eng, GroupOptions{Consumer: "c1", Block: 50 * time.Millisecond})
+	if err := gc.EnsureGroups(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a Redis flush/restart: the group disappears.
+	if err := log.rdb.XGroupDestroy(ctx, log.StreamName(0), "rankers").Err(); err != nil {
+		t.Fatal(err)
+	}
+	// Step must not error on NOGROUP — it recreates the group and recovers.
+	for i := 0; i < 5; i++ {
+		if _, err := gc.Step(ctx); err != nil {
+			t.Fatalf("step after group destroy should self-heal, got: %v", err)
+		}
+	}
+	board := engine.Board{Key: engine.BoardKey{App: app, Board: "b", Segment: "all", Window: "all"}}
+	if re, err := eng.GetRank(ctx, board, "phoenix"); err != nil {
+		t.Fatalf("record not applied after self-heal: %v", err)
+	} else if re.Member != "phoenix" {
+		t.Errorf("unexpected entry %+v", re)
+	}
+}
+
 func TestGroupStaticOwnershipParallel(t *testing.T) {
 	ctx := context.Background()
 	log, eng, reg, app := groupHarness(t, 6, engine.BoardConfig{})

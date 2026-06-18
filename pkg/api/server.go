@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/kodeni-am/leaderboard/pkg/accounts"
 	"github.com/kodeni-am/leaderboard/pkg/engine"
 	"github.com/kodeni-am/leaderboard/pkg/ingest"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
@@ -22,16 +23,17 @@ import (
 // Server wires the engine, ingestor, tenant store, and the in-memory board
 // resolver into an http.Handler.
 type Server struct {
-	eng        engine.RankingEngine
-	ing        *ingest.Ingestor
-	store      tenancy.Store
-	registry   *ingest.StaticRegistry
-	adminToken string
-	verifier   *trust.Verifier // optional HMAC anti-cheat; nil disables
+	eng           engine.RankingEngine
+	ing           *ingest.Ingestor
+	store         tenancy.Store
+	registry      *ingest.StaticRegistry
+	accounts      *accounts.Service
+	secureCookies bool            // set Secure on auth cookies (true behind TLS)
+	verifier      *trust.Verifier // optional HMAC anti-cheat; nil disables
 }
 
-func NewServer(eng engine.RankingEngine, ing *ingest.Ingestor, store tenancy.Store, registry *ingest.StaticRegistry, adminToken string) *Server {
-	return &Server{eng: eng, ing: ing, store: store, registry: registry, adminToken: adminToken}
+func NewServer(eng engine.RankingEngine, ing *ingest.Ingestor, store tenancy.Store, registry *ingest.StaticRegistry, acct *accounts.Service, secureCookies bool) *Server {
+	return &Server{eng: eng, ing: ing, store: store, registry: registry, accounts: acct, secureCookies: secureCookies}
 }
 
 // SetVerifier enables HMAC signature verification on score submissions. When
@@ -54,28 +56,47 @@ func (s *Server) WarmRegistry(ctx context.Context) error {
 // Handler returns the configured router with Prometheus instrumentation.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	auth := tenancy.Authenticate(s.store)
 
 	// reg registers a handler wrapped with metrics under the pattern's route.
 	reg := func(pattern string, h http.Handler) {
 		mux.Handle(pattern, instrument(routeLabel(pattern), h))
 	}
-	regAuthed := func(pattern string, h http.HandlerFunc) {
-		reg(pattern, auth(h))
+	// dataPlane: API-key OR session+X-App-Id (owner-scoped). For game clients
+	// and the dashboard's board/leaderboard views.
+	dataPlane := func(pattern string, h http.HandlerFunc) {
+		reg(pattern, s.requireApp(h))
+	}
+	// user: session-authed (dashboard account actions).
+	user := func(pattern string, h http.HandlerFunc) {
+		reg(pattern, s.requireUser(h))
 	}
 
 	reg("GET /healthz", http.HandlerFunc(s.handleHealth))
-	reg("POST /v1/apps", http.HandlerFunc(s.handleCreateApp)) // admin-token protected
-	mux.Handle("GET /metrics", promhttp.Handler())            // scrape target; not instrumented
+	mux.Handle("GET /metrics", promhttp.Handler()) // scrape target; not instrumented
 
-	regAuthed("POST /v1/boards", s.handleCreateBoard)
-	regAuthed("GET /v1/boards", s.handleListBoards)
-	regAuthed("POST /v1/boards/{board}/scores", s.handleSubmit)
-	regAuthed("GET /v1/boards/{board}/rank", s.handleRank)
-	regAuthed("GET /v1/boards/{board}/top", s.handleTop)
-	regAuthed("GET /v1/boards/{board}/page", s.handlePage)
-	regAuthed("GET /v1/boards/{board}/neighbors", s.handleNeighbors)
-	regAuthed("POST /v1/boards/{board}/friends", s.handleFriends)
+	// Account/auth plane (humans).
+	reg("POST /auth/signup", http.HandlerFunc(s.handleSignup))
+	reg("POST /auth/login", http.HandlerFunc(s.handleLogin))
+	reg("GET /auth/verify", http.HandlerFunc(s.handleVerify))
+	reg("POST /auth/resend", http.HandlerFunc(s.handleResend))
+	reg("POST /auth/forgot", http.HandlerFunc(s.handleForgot))
+	reg("POST /auth/reset", http.HandlerFunc(s.handleReset))
+	user("POST /auth/logout", s.handleLogout)
+	user("GET /auth/me", s.handleMe)
+
+	// App management (owner-scoped, session-authed).
+	user("POST /v1/apps", s.handleCreateApp)
+	user("GET /v1/apps", s.handleListApps)
+
+	// Data plane (API-key or session+app-id).
+	dataPlane("POST /v1/boards", s.handleCreateBoard)
+	dataPlane("GET /v1/boards", s.handleListBoards)
+	dataPlane("POST /v1/boards/{board}/scores", s.handleSubmit)
+	dataPlane("GET /v1/boards/{board}/rank", s.handleRank)
+	dataPlane("GET /v1/boards/{board}/top", s.handleTop)
+	dataPlane("GET /v1/boards/{board}/page", s.handlePage)
+	dataPlane("GET /v1/boards/{board}/neighbors", s.handleNeighbors)
+	dataPlane("POST /v1/boards/{board}/friends", s.handleFriends)
 	return mux
 }
 
@@ -135,32 +156,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 
 // --- app management ---
 
-type createAppReq struct {
-	Name string `json:"name"`
-}
-type createAppResp struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	APIKey string `json:"api_key"` // shown once
-}
-
-func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
-	if s.adminToken == "" || r.Header.Get("X-Admin-Token") != s.adminToken {
-		writeErr(w, http.StatusUnauthorized, "admin token required")
-		return
-	}
-	var req createAppReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
-		writeErr(w, http.StatusBadRequest, "name required")
-		return
-	}
-	app, key, err := s.store.CreateApp(r.Context(), req.Name)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, createAppResp{ID: app.ID, Name: app.Name, APIKey: key})
-}
+// App management handlers live in auth.go (session-authed, owner-scoped).
 
 // --- board definitions ---
 

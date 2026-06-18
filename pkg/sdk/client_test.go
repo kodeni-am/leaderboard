@@ -34,12 +34,13 @@ func TestSDKAgainstServer(t *testing.T) {
 	log := ingest.NewMemLog()
 	ing := ingest.NewIngestor(log, registry, ingest.NewMemDeduper())
 	cons := ingest.NewConsumer(log, registry, eng)
-	srv := api.NewServer(eng, ing, store, registry, "admin")
+	srv := api.NewServer(eng, ing, store, registry, nil, false)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	// Provision a tenant directly (CreateApp is an admin operation).
-	app, key, err := store.CreateApp(ctx, "Racer")
+	// Provision a tenant directly (this SDK test exercises the API-key data
+	// plane, not the human account flow).
+	app, key, err := store.CreateApp(ctx, "usr_sdk_test", "Racer")
 	if err != nil {
 		t.Fatal(err)
 	}

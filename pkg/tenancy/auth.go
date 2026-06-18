@@ -16,6 +16,13 @@ func AppFromContext(ctx context.Context) (App, bool) {
 	return app, ok
 }
 
+// WithApp attaches an authenticated tenant to the context. Used by callers that
+// resolve the app via a path other than the API-key middleware (e.g. the
+// dashboard's session+app-id auth).
+func WithApp(ctx context.Context, app App) context.Context {
+	return context.WithValue(ctx, appContextKey, app)
+}
+
 // extractKey pulls the API key from "Authorization: Bearer <key>" or the
 // "X-API-Key" header.
 func extractKey(r *http.Request) string {

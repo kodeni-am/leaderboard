@@ -13,7 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kodeni-am/leaderboard/pkg/accounts"
 	"github.com/kodeni-am/leaderboard/pkg/api"
+	"github.com/kodeni-am/leaderboard/pkg/email"
 	"github.com/kodeni-am/leaderboard/pkg/engine"
 	"github.com/kodeni-am/leaderboard/pkg/ingest"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
@@ -35,11 +37,12 @@ func main() {
 		listenAddr = getenv("LISTEN_ADDR", ":8080")
 		logBackend = getenv("LB_LOG_BACKEND", "redis") // redis | mem
 		stream     = getenv("LB_STREAM", "lb:ingest")
-		adminToken = os.Getenv("ADMIN_TOKEN")
 		signingKey = os.Getenv("SIGNING_SECRET")
 		partitions = intEnv("INGEST_PARTITIONS", 16)
 		workerIdx  = intEnv("WORKER_INDEX", 0)
 		workerCnt  = intEnv("WORKER_COUNT", 1)
+		publicURL  = getenv("PUBLIC_URL", "http://localhost:8080")
+		secureCk   = os.Getenv("SECURE_COOKIES") == "true"
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -67,7 +70,10 @@ func main() {
 	}
 	ing := ingest.NewIngestor(lg, registry, ingest.NewRedisDeduper(rdb))
 
-	srv := api.NewServer(eng, ing, store, registry, adminToken)
+	rs := accounts.NewRedisStores(rdb)
+	acctSvc := accounts.NewService(rs, rs, rs, buildMailer(), accounts.Config{BaseURL: publicURL})
+
+	srv := api.NewServer(eng, ing, store, registry, acctSvc, secureCk)
 	if signingKey != "" {
 		srv.SetVerifier(trust.NewVerifier(signingKey, 5*time.Minute))
 		log.Print("HMAC submission verification: ENABLED")
@@ -148,6 +154,16 @@ func waitForRedis(ctx context.Context, rdb redis.UniversalClient) error {
 		}
 		time.Sleep(time.Second)
 	}
+}
+
+func buildMailer() email.Sender {
+	host := os.Getenv("SMTP_HOST")
+	if host == "" {
+		log.Print("email: using console sender (set SMTP_HOST to send real mail)")
+		return email.NewConsoleSender(os.Stdout)
+	}
+	from := getenv("SMTP_FROM", "no-reply@openleaderboard.local")
+	return email.NewSMTPSender(host, intEnv("SMTP_PORT", 587), os.Getenv("SMTP_USER"), os.Getenv("SMTP_PASS"), from)
 }
 
 func intEnv(key string, def int) int {

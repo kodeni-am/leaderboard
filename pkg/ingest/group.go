@@ -90,6 +90,11 @@ func (g *GroupConsumer) appliedKey(stream, id string) string {
 	return "lb:applied:" + stream + "-" + id
 }
 
+// isNoGroup reports whether err is Redis's NOGROUP (stream/group missing).
+func isNoGroup(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "NOGROUP")
+}
+
 // EnsureGroups creates the consumer group on each owned partition's stream,
 // creating the stream if necessary (MKSTREAM). Idempotent.
 func (g *GroupConsumer) EnsureGroups(ctx context.Context) error {
@@ -189,6 +194,11 @@ func (g *GroupConsumer) Step(ctx context.Context) (int, error) {
 	if err == redis.Nil {
 		return 0, nil // nothing arrived within the block window
 	}
+	if isNoGroup(err) {
+		// Streams/groups vanished (e.g. Redis restart/flush, or a freshly added
+		// partition). Recreate and pick up on the next tick instead of dying.
+		return 0, g.EnsureGroups(ctx)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -220,6 +230,9 @@ func (g *GroupConsumer) Reclaim(ctx context.Context) (int, error) {
 				Start:    start,
 				Count:    g.batch,
 			}).Result()
+			if isNoGroup(err) {
+				return total, g.EnsureGroups(ctx)
+			}
 			if err != nil {
 				return total, err
 			}
