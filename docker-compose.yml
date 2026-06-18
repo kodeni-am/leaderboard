@@ -44,7 +44,9 @@ services:
       LB_LOG_BACKEND: redis
       LB_REAPER_RETAIN: 168h
       SIGNING_SECRET: ${SIGNING_SECRET:-}
-      PUBLIC_URL: http://localhost:8080
+      # Dev: the web app runs on the Vite dev server (:5173), which proxies
+      # /auth to the API — so email links must point there, not at :8080.
+      PUBLIC_URL: http://localhost:5173
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       SMTP_FROM: no-reply@openleaderboard.local
