@@ -495,12 +495,16 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
   const opts = windowOptions(windows);
   const [entries, setEntries] = useState<RankEntry[]>([]);
   const [win, setWin] = useState(opts[0]?.value ?? "all");
+  // Segments are ad-hoc (set per submit, e.g. "region=eu"), not declared on the
+  // board, so they can't be enumerated — it's a free-text filter (blank = all),
+  // applied on Refresh/Enter rather than per keystroke.
+  const [seg, setSeg] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function loadTop() {
     try {
-      const { entries } = await api.top(appId, board, 25, { window: win });
+      const { entries } = await api.top(appId, board, 25, { window: win, segment: seg || undefined });
       setEntries(entries);
       setErr("");
     } catch (e) {
@@ -523,6 +527,14 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
               {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           )}
+          <input
+            value={seg}
+            onChange={(e) => setSeg(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void loadTop(); }}
+            placeholder="all segments"
+            title="Segment filter, e.g. region=eu (blank = all)"
+            style={{ width: 130 }}
+          />
           <button className="btn btn-ghost btn-sm" onClick={() => void loadTop()}>Refresh</button>
         </div>
       </div>
@@ -545,11 +557,11 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
         }}
       />
 
-      <RankSearch appId={appId} board={board} window={win} />
+      <RankSearch appId={appId} board={board} window={win} segment={seg} />
 
       <div className="panel" style={{ padding: 0 }}>
         <div className="eyebrow" style={{ padding: "14px 18px", borderBottom: "1px solid var(--line)" }}>
-          TOP {entries.length}{win !== "all" ? ` · ${opts.find((o) => o.value === win)?.label ?? win}` : ""}
+          TOP {entries.length}{win !== "all" ? ` · ${opts.find((o) => o.value === win)?.label ?? win}` : ""}{seg ? ` · ${seg}` : ""}
         </div>
         {err && <div className="notice err" style={{ margin: 16 }}>{err}</div>}
         {entries.length === 0 && !err && <div className="dim" style={{ padding: 18, fontSize: 14 }}>No entries in this window yet — submit a score above.</div>}
@@ -594,7 +606,7 @@ function TestSubmit({ board, busy, onSubmit }: { appId: string; board: string; b
   );
 }
 
-function RankSearch({ appId, board, window }: { appId: string; board: string; window: string }) {
+function RankSearch({ appId, board, window, segment }: { appId: string; board: string; window: string; segment: string }) {
   const [member, setMember] = useState("");
   const [result, setResult] = useState<RankEntry | null>(null);
   const [msg, setMsg] = useState("");
@@ -604,9 +616,9 @@ function RankSearch({ appId, board, window }: { appId: string; board: string; wi
     setResult(null);
     setMsg("");
     try {
-      setResult(await api.rank(appId, board, member, { window }));
+      setResult(await api.rank(appId, board, member, { window, segment: segment || undefined }));
     } catch (e) {
-      setMsg((e as ApiError).status === 404 ? "Not in this window." : (e as ApiError).message);
+      setMsg((e as ApiError).status === 404 ? "Not in this window/segment." : (e as ApiError).message);
     }
   }
 
