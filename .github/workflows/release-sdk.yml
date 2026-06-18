@@ -1,0 +1,69 @@
+name: release-sdk
+
+# Auto-publishes sdk/typescript to npm whenever its source or manifest changes
+# on main. Versions are computed from the npm-published version (immutable), so
+# every release gets a fresh patch bump; a manual minor/major bump in
+# package.json is respected if it is higher. Requires an NPM_TOKEN repo secret
+# (npm "Automation" token).
+#
+# NOTE: the bump is NOT committed back (main is protected). The repo's
+# package.json version is therefore a floor — edit it to force a minor/major.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdk/typescript/src/**"
+      - "sdk/typescript/package.json"
+  workflow_dispatch: {}
+
+concurrency:
+  group: release-sdk
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm install --no-audit --no-fund
+
+      - name: Compute release version
+        id: ver
+        run: |
+          set -euo pipefail
+          published=$(npm view @openleaderboard/sdk version 2>/dev/null || echo "0.0.0")
+          current=$(node -p "require('./package.json').version")
+          # next patch above whatever is currently published
+          next=$(node -e "const v='${published}'.split('.').map(Number); v[2]++; console.log(v.join('.'))")
+          # respect a manual minor/major bump in package.json if it is higher
+          target=$(printf '%s\n%s\n' "$next" "$current" | sort -V | tail -1)
+          echo "published=$published current=$current target=$target"
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+
+      - name: Stop if already published
+        id: guard
+        run: |
+          set -euo pipefail
+          if npm view "@openleaderboard/sdk@${{ steps.ver.outputs.target }}" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "Version ${{ steps.ver.outputs.target }} already on npm — skipping."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set version
+        if: steps.guard.outputs.already == 'false'
+        run: npm version "${{ steps.ver.outputs.target }}" --no-git-tag-version --allow-same-version
+
+      - name: Publish
+        if: steps.guard.outputs.already == 'false'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
