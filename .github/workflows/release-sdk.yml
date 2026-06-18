@@ -1,19 +1,15 @@
 name: release-sdk
 
-# Auto-publishes sdk/typescript to npm whenever its source or manifest changes
-# on main. Versions are computed from the npm-published version (immutable), so
-# every release gets a fresh patch bump; a manual minor/major bump in
-# package.json is respected if it is higher. Requires an NPM_TOKEN repo secret
-# (npm "Automation" token).
-#
-# NOTE: the bump is NOT committed back (main is protected). The repo's
-# package.json version is therefore a floor — edit it to force a minor/major.
+# Publishes sdk/typescript to npm when its version in package.json is one that
+# isn't on npm yet. package.json is authoritative: bump the version in your PR,
+# and merging to main publishes exactly that version. Changes without a version
+# bump are a no-op (the version is already published → skipped). Requires an
+# NPM_TOKEN repo secret (npm "Automation" token).
 on:
   push:
     branches: [main]
     paths:
-      - "sdk/typescript/src/**"
-      - "sdk/typescript/package.json"
+      - "sdk/typescript/**"
   workflow_dispatch: {}
 
 concurrency:
@@ -34,36 +30,22 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - run: npm install --no-audit --no-fund
 
-      - name: Compute release version
-        id: ver
-        run: |
-          set -euo pipefail
-          published=$(npm view @openleaderboard/sdk version 2>/dev/null || echo "0.0.0")
-          current=$(node -p "require('./package.json').version")
-          # next patch above whatever is currently published
-          next=$(node -e "const v='${published}'.split('.').map(Number); v[2]++; console.log(v.join('.'))")
-          # respect a manual minor/major bump in package.json if it is higher
-          target=$(printf '%s\n%s\n' "$next" "$current" | sort -V | tail -1)
-          echo "published=$published current=$current target=$target"
-          echo "target=$target" >> "$GITHUB_OUTPUT"
-
-      - name: Stop if already published
+      - name: Check whether this version is already published
         id: guard
         run: |
           set -euo pipefail
-          if npm view "@openleaderboard/sdk@${{ steps.ver.outputs.target }}" version >/dev/null 2>&1; then
-            echo "already=true" >> "$GITHUB_OUTPUT"
-            echo "Version ${{ steps.ver.outputs.target }} already on npm — skipping."
+          version=$(node -p "require('./package.json').version")
+          name=$(node -p "require('./package.json').name")
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "${name}@${version} is already on npm — nothing to release."
           else
-            echo "already=false" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "Releasing ${name}@${version}."
           fi
 
-      - name: Set version
-        if: steps.guard.outputs.already == 'false'
-        run: npm version "${{ steps.ver.outputs.target }}" --no-git-tag-version --allow-same-version
-
       - name: Publish
-        if: steps.guard.outputs.already == 'false'
+        if: steps.guard.outputs.publish == 'true'
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

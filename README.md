@@ -135,7 +135,7 @@ All query endpoints accept `segment=` and `window=` (a literal id like
 | `pkg/trust` | SP7 | HMAC submission verification |
 | `pkg/sdk` | SP8 | Reference Go client |
 | `sdk/unity` | SP8 | Unity/C# client SDK (UPM package, async/await) |
-| `sdk/typescript` | SP8 | TypeScript client SDK (browser + Node 18+) |
+| `sdk/typescript` | SP8 | TypeScript client SDK (browser + Node 18+) — [![npm](https://img.shields.io/npm/v/@openleaderboard/sdk.svg?label=npm&color=c6f135)](https://www.npmjs.com/package/@openleaderboard/sdk) |
 | `pkg/accounts` | SP9 | User accounts, sessions, email verification/reset |
 | `pkg/email` | SP9 | Transactional email (console + SMTP) |
 | `web` | SP10 | React+Vite landing page + dashboard |
