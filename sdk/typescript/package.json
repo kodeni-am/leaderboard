@@ -17,10 +17,19 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:e2e": "node test/e2e.mjs",
-    "test:hmac": "node test/hmac.mjs"
+    "test:hmac": "node test/hmac.mjs",
+    "prepublishOnly": "npm run build"
   },
   "keywords": ["leaderboard", "gaming", "ranking", "api"],
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kodeni-am/leaderboard.git",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://github.com/kodeni-am/leaderboard/tree/main/sdk/typescript#readme",
+  "bugs": { "url": "https://github.com/kodeni-am/leaderboard/issues" },
+  "publishConfig": { "access": "public" },
   "engines": { "node": ">=18" },
   "devDependencies": { "typescript": "^5.5.0" }
 }
