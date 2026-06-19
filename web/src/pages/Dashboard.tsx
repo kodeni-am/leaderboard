@@ -515,18 +515,27 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
   useEffect(() => {
     void loadTop();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appId, board, win]);
+  }, [appId, board]);
 
   return (
     <div className="stack-sm">
       <div className="spread">
         <h3 className="mono" style={{ fontSize: 18 }}>{board}</h3>
         <div className="row" style={{ gap: 8 }}>
-          {opts.length > 1 && (
-            <select value={win} onChange={(e) => setWin(e.target.value)} style={{ width: "auto" }} title="Window">
-              {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          )}
+          {/* Window accepts a keyword (daily/weekly/monthly resolve to the CURRENT
+              bucket) or a literal bucket id like d=2026-06-17 to view a past period. */}
+          <input
+            list={`win-${board}`}
+            value={win}
+            onChange={(e) => setWin(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") void loadTop(); }}
+            placeholder="all"
+            title="Window: a keyword (daily/weekly/monthly) or a bucket id like d=2026-06-17"
+            style={{ width: 120 }}
+          />
+          <datalist id={`win-${board}`}>
+            {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </datalist>
           <input
             value={seg}
             onChange={(e) => setSeg(e.target.value)}
@@ -538,15 +547,21 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
           <button className="btn btn-ghost btn-sm" onClick={() => void loadTop()}>Refresh</button>
         </div>
       </div>
+      <p className="dim" style={{ fontSize: 12, margin: "-4px 0 0" }}>
+        Window/segment apply on Enter or Refresh. Keyword windows (daily/weekly/monthly) show the current bucket — type a bucket id (e.g. <span className="mono">d=2026-06-17</span>) to view a past one.
+      </p>
 
       <TestSubmit
         appId={appId}
         board={board}
+        segment={seg}
         busy={busy}
         onSubmit={async (m, s) => {
           setBusy(true);
           try {
-            await api.submit(appId, board, m, s);
+            // A submit fans out to all of the board's windows automatically; only
+            // the segment is a write-time choice, so mirror the viewer's filter.
+            await api.submit(appId, board, m, s, seg ? [seg] : undefined);
             // write-behind: give the consumer a moment, then refresh
             setTimeout(() => void loadTop(), 700);
           } catch (e) {
@@ -584,9 +599,10 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
   );
 }
 
-function TestSubmit({ board, busy, onSubmit }: { appId: string; board: string; busy: boolean; onSubmit: (m: string, s: number) => void }) {
+function TestSubmit({ board, segment, busy, onSubmit }: { appId: string; board: string; segment: string; busy: boolean; onSubmit: (m: string, s: number) => void }) {
   const [member, setMember] = useState("");
   const [score, setScore] = useState("");
+  const dest = `${board} · all windows · ${segment || "all"} segment`;
   return (
     <form
       className="panel row collapse"
@@ -601,7 +617,7 @@ function TestSubmit({ board, busy, onSubmit }: { appId: string; board: string; b
         <span>Score</span>
         <input value={score} onChange={(e) => setScore(e.target.value)} placeholder="1500" type="number" />
       </label>
-      <button className="btn" type="submit" disabled={busy} title={`Submit to ${board}`}>{busy ? "…" : "Submit"}</button>
+      <button className="btn" type="submit" disabled={busy} title={`Submit to ${dest}`}>{busy ? "…" : "Submit"}</button>
     </form>
   );
 }
