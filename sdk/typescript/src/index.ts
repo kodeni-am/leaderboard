@@ -34,6 +34,13 @@ export interface QueryOpts {
 export interface SubmitOpts {
   segments?: string[];
   idem?: string;
+  /**
+   * Event time of the score. Determines which time-window bucket it lands in
+   * (e.g. the daily board) — set it to the session start so a run that crosses
+   * midnight counts for the day it began, rather than when it was submitted.
+   * Accepts a Date or an ISO-8601 string; defaults to server receive time.
+   */
+  time?: Date | string;
 }
 
 export interface WindowDef {
@@ -131,6 +138,7 @@ export class LeaderboardClient {
       score,
       segments: opts.segments,
       idem: opts.idem,
+      time: opts.time instanceof Date ? opts.time.toISOString() : opts.time,
     };
     if (this.opts.signingSecret) {
       const ts = Math.floor(Date.now() / 1000);

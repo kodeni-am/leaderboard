@@ -71,12 +71,15 @@ const top = await lb.getTop("high_scores", 10);`}</Code>
             <h2>Core concepts</h2>
             <ul style={{ lineHeight: 1.8 }}>
               <li><b>Board</b> — a ranking. Configure <span className="muted-code">sort_order</span> (<span className="mono">desc</span> = higher wins, <span className="mono">asc</span> = lower/faster wins), <span className="muted-code">update_policy</span> (<span className="mono">best</span> / <span className="mono">last</span> / <span className="mono">increment</span>), and <span className="muted-code">tie_break</span> (<span className="mono">lexical</span> or <span className="mono">firstToReach</span>).</li>
-              <li><b>Windows</b> — a board can keep a permanent <span className="mono">all</span>-time ranking plus rolling <span className="mono">daily</span> / <span className="mono">weekly</span> / <span className="mono">monthly</span> / seasonal windows that reset automatically.</li>
+              <li><b>Windows</b> — a board can keep a permanent <span className="mono">all</span>-time ranking plus rolling <span className="mono">daily</span> / <span className="mono">weekly</span> / <span className="mono">monthly</span> / seasonal windows. A score lands in the bucket for its <b>event time</b> (UTC), which defaults to when the server receives it — pass <span className="muted-code">time</span> on submit (e.g. the session start) so a run that crosses midnight counts for the day it began.</li>
               <li><b>Segments</b> — slice a board by region, platform, or any cohort key you pass at submit time (e.g. <span className="mono">region=eu</span>).</li>
               <li><b>Friends &amp; neighbors</b> — rank a specific set of members against each other, or fetch the players just above and below a given player.</li>
               <li><b>Write-behind</b> — submits are durably logged and ranked asynchronously (typically within milliseconds), so writes stay fast and bursts are absorbed.</li>
               <li><b>Scale</b> — rank reads stay O(log N) at any size. For very large boards you can enable an <b>approximate-rank tier</b>: create the board with <span className="muted-code">approx_rank: true</span> (plus an <span className="muted-code">approx_min</span>/<span className="muted-code">approx_max</span> score range) and read with <span className="muted-code">?approx=true</span> to get an O(buckets) estimate. The response’s <span className="muted-code">exact</span> flag tells you whether a rank is exact or estimated.</li>
             </ul>
+            <div className="notice" style={{ marginTop: 14, fontSize: 13 }}>
+              <b>Time windows reset at UTC midnight.</b> There’s no per-board timezone yet. For a non-UTC daily reset, either slice by region with <span className="muted-code">segments</span>, or drive a <span className="mono">custom</span> window whose id you rotate at your local midnight (e.g. a cron). <b>Do not</b> shift the submitted <span className="muted-code">time</span> to fake a local day — it lands the score in the right bucket but corrupts <span className="mono">firstToReach</span> tie-breaks (the timestamp also encodes achievement order) and mislabels the bucket id.
+            </div>
           </section>
 
           <section id="auth" className="docs-section">

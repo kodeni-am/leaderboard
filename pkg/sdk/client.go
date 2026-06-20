@@ -120,8 +120,11 @@ func (c *Client) CreateBoard(ctx context.Context, def BoardDef) error {
 
 // Submission is a score to submit.
 type Submission struct {
-	Member   string    `json:"member"`
-	Score    float64   `json:"score"`
+	Member string  `json:"member"`
+	Score  float64 `json:"score"`
+	// Time is the event time of the score; it selects the time-window bucket
+	// (e.g. the daily board). Set it to the session start so a run crossing
+	// midnight counts for the day it began. Zero value means server receive time.
 	Time     time.Time `json:"time,omitempty"`
 	Segments []string  `json:"segments,omitempty"`
 	Idem     string    `json:"idem,omitempty"`

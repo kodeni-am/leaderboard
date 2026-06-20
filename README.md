@@ -339,6 +339,12 @@ Honest about what v1 is and isn't:
   should be measured per workload with `cmd/loadtest`.
 - **KinesisLog** is provisioned by IaC but not yet implemented in code (Redis
   Streams + in-memory logs ship today; the `Log` interface is the seam).
+- **Timezone-aware windows** aren't built — daily/weekly/monthly buckets reset at
+  UTC midnight (`WindowID` keys off the event time's UTC date). For a non-UTC
+  reset, slice by region with segments or rotate a `custom` window id at local
+  midnight. Note: don't pre-shift the submitted `time` to fake a local day — it
+  also encodes `firstToReach` order, so shifting corrupts tie-breaks. A per-board
+  IANA timezone is a candidate once there's demand (needs tzdata in the image).
 - **Multi-region active-active** is out of scope for v1.
 - **Statistical anomaly detection** beyond HMAC verification is a documented
   log-consumer seam.
