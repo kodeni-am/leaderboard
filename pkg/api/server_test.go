@@ -560,6 +560,37 @@ func TestCORS(t *testing.T) {
 	}
 }
 
+func TestSubmitTimeDecoding(t *testing.T) {
+	h := newHarness(t)
+	h.onboard(t, "time@example.com")
+	t.Cleanup(func() {
+		_ = h.eng.Reset(context.Background(), engine.Board{Key: engine.BoardKey{App: h.appID, Board: "tw", Segment: "all", Window: "all"}})
+	})
+	h.call(t, http.MethodPost, "/v1/boards", h.key(), map[string]any{"board": "tw"})
+
+	cases := []struct {
+		name string
+		time any
+		want int
+	}{
+		{"empty string (Unity JsonUtility)", "", http.StatusAccepted},
+		{"omitted", nil, http.StatusAccepted},
+		{"valid RFC3339", "2026-06-20T08:30:00Z", http.StatusAccepted},
+		{"valid with millis", "2026-06-20T08:30:00.500Z", http.StatusAccepted},
+		{"malformed", "not-a-time", http.StatusBadRequest},
+	}
+	for i, c := range cases {
+		body := map[string]any{"member": "p" + strconv.Itoa(i), "score": 1}
+		if c.time != nil {
+			body["time"] = c.time
+		}
+		resp, b := h.call(t, http.MethodPost, "/v1/boards/tw/scores", h.key(), body)
+		if resp.StatusCode != c.want {
+			t.Errorf("%s: got %d, want %d (%s)", c.name, resp.StatusCode, c.want, b)
+		}
+	}
+}
+
 func TestMetricsEndpoint(t *testing.T) {
 	h := newHarness(t)
 	h.onboard(t, "metrics@example.com")

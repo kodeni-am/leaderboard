@@ -357,15 +357,34 @@ func (s *Server) handleListBoards(w http.ResponseWriter, r *http.Request) {
 // --- score submission ---
 
 type submitReq struct {
-	Member   string    `json:"member"`
-	Score    float64   `json:"score"`
-	Time     time.Time `json:"time,omitempty"`
-	Segments []string  `json:"segments,omitempty"`
-	Idem     string    `json:"idem,omitempty"`
+	Member   string   `json:"member"`
+	Score    float64  `json:"score"`
+	Time     jsonTime `json:"time,omitempty"`
+	Segments []string `json:"segments,omitempty"`
+	Idem     string   `json:"idem,omitempty"`
 	// Anti-cheat (used only when the server has a verifier configured).
 	Sig   string `json:"sig,omitempty"`
 	TS    int64  `json:"ts,omitempty"`
 	Nonce string `json:"nonce,omitempty"`
+}
+
+// jsonTime is an RFC3339 time that also accepts an empty string or null as the
+// zero value. Clients whose serializers can't omit fields (e.g. Unity's
+// JsonUtility) send "time":"" — treat that as "not provided" rather than 400.
+type jsonTime struct{ time.Time }
+
+func (t *jsonTime) UnmarshalJSON(b []byte) error {
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		t.Time = time.Time{}
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return err
+	}
+	t.Time = parsed
+	return nil
 }
 
 func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
@@ -394,7 +413,7 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	accepted, err := s.ing.Submit(r.Context(), ingest.Record{
 		App: app.ID, Board: board, Member: req.Member, Score: req.Score,
-		Time: req.Time, Segments: req.Segments, Idem: req.Idem,
+		Time: req.Time.Time, Segments: req.Segments, Idem: req.Idem,
 	})
 	if errors.Is(err, ingest.ErrUnknownBoard) {
 		submitsTotal.WithLabelValues("unknown_board").Inc()

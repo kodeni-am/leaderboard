@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Text;
 using System.Threading.Tasks;
 using UnityEngine.Networking;
@@ -44,9 +45,15 @@ namespace OpenLeaderboard
 
         /// <summary>Submit a score. Write-behind: it is durably logged and ranked shortly after.</summary>
         public async Task<SubmitResult> SubmitScoreAsync(string board, string member, double score,
-            string[] segments = null, string idem = null)
+            string[] segments = null, string idem = null, DateTime? time = null)
         {
-            var body = new SubmitRequest { member = member, score = score, segments = segments, idem = idem };
+            // Event time selects the time-window bucket (e.g. the daily board).
+            // Pass the session start so a run crossing midnight counts for the day
+            // it began; omit for server receive time.
+            string timeStr = time.HasValue
+                ? time.Value.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fff'Z'", CultureInfo.InvariantCulture)
+                : "";
+            var body = new SubmitRequest { member = member, score = score, segments = segments, idem = idem, time = timeStr };
             if (!string.IsNullOrEmpty(_signingSecret))
             {
                 body.ts = DateTimeOffset.UtcNow.ToUnixTimeSeconds();

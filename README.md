@@ -1,5 +1,7 @@
 # OpenLeaderboard
 
+**Website / hosted instance: [openleaderboard.app](https://openleaderboard.app/)** — sign up, create an app, and get an API key (or self-host).
+
 A fast, open-source, multi-tenant **leaderboard service** for game developers.
 Built for scale — single boards into the 100M+ entry range, bursty score
 writes — with **rank reads that don't slow down as boards grow** (rank is

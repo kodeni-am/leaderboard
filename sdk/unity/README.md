@@ -28,6 +28,11 @@ var lb = new LeaderboardClient("https://lb.example.com", "lb_your_api_key");
 // Submit (write-behind: durably logged, ranked shortly after).
 await lb.SubmitScoreAsync("high", playerId, 1500);
 
+// Optional: segments and an explicit event time (e.g. the session start, so a
+// run crossing midnight counts for the day it began on time-windowed boards).
+await lb.SubmitScoreAsync("high", playerId, 1500,
+    segments: new[] { "all", "region=eu" }, time: sessionStart);
+
 // Read back.
 RankEntry me   = await lb.GetRankAsync("high", playerId);   // throws NotFoundException if absent
 RankEntry[] top = await lb.GetTopAsync("high", 10);

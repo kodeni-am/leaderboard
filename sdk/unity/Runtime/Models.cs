@@ -49,6 +49,9 @@ namespace OpenLeaderboard
         public double score;
         public string[] segments;
         public string idem;
+        // RFC3339 event time, or "" for server receive time. JsonUtility can't
+        // omit fields, so this is always sent; the server treats "" as unset.
+        public string time;
         public string sig;
         public long ts;
         public string nonce;
