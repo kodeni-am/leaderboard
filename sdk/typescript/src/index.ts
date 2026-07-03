@@ -17,6 +17,15 @@ export interface RankEntry {
   score: number;
   rank: number; // 1-based
   exact: boolean; // false only for the sharded approximate tier
+  nickname?: string; // present when the member is a registered player
+}
+
+/** A registered player: server-minted id + nickname unique per app (case-insensitive). */
+export interface User {
+  user_id: string;
+  nickname: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface SubmitResult {
@@ -91,6 +100,14 @@ export class NotFoundError extends LeaderboardError {
   constructor(message: string) {
     super(404, message);
     this.name = "NotFoundError";
+  }
+}
+
+/** Thrown when a nickname is already claimed in this app (HTTP 409). */
+export class NicknameTakenError extends LeaderboardError {
+  constructor(message: string) {
+    super(409, message);
+    this.name = "NicknameTakenError";
   }
 }
 
@@ -190,6 +207,35 @@ export class LeaderboardClient {
     return r.entries ?? [];
   }
 
+  /**
+   * Register a player: mints a `plr_...` user id and claims a nickname
+   * (unique per app, case-insensitive). Submit scores with `user_id` as the
+   * member; reads then include the nickname. Throws {@link NicknameTakenError}
+   * if the name is claimed.
+   */
+  async registerUser(nickname: string): Promise<User> {
+    return this.send("POST", "/v1/users", { nickname });
+  }
+
+  /** Fetch a registered player by id. Throws {@link NotFoundError} if absent. */
+  async getUser(userId: string): Promise<User> {
+    return this.send("GET", `/v1/users/${enc(userId)}`);
+  }
+
+  /** Resolve a nickname (case-insensitive) to its player. */
+  async getUserByNickname(nickname: string): Promise<User> {
+    return this.send("GET", `/v1/users${qs({ nickname })}`);
+  }
+
+  /**
+   * Change a player's nickname. The user id — and therefore board data and
+   * HMAC signatures — is unaffected. Throws {@link NicknameTakenError} on
+   * conflict.
+   */
+  async renameUser(userId: string, nickname: string): Promise<User> {
+    return this.send("PATCH", `/v1/users/${enc(userId)}`, { nickname });
+  }
+
   private async send(method: string, path: string, body?: unknown): Promise<any> {
     const headers: Record<string, string> = { Authorization: `Bearer ${this.apiKey}` };
     let bodyStr: string | undefined;
@@ -200,6 +246,7 @@ export class LeaderboardClient {
     const resp = await this.fetchFn(this.baseUrl + path, { method, headers, body: bodyStr });
     const text = await resp.text();
     if (resp.status === 404) throw new NotFoundError(text);
+    if (resp.status === 409) throw new NicknameTakenError(text);
     if (!resp.ok) throw new LeaderboardError(resp.status, `${method} ${path} -> ${resp.status}: ${text}`);
     return text ? JSON.parse(text) : {};
   }

@@ -1,7 +1,7 @@
 // End-to-end test of the TS SDK against a running leaderboardd.
 // Requires the server up (e.g. `docker compose up -d leaderboardd`) and an
 // app API key in LB_API_KEY. Run after `npm run build`.
-import { LeaderboardClient, NotFoundError } from "../dist/index.js";
+import { LeaderboardClient, NotFoundError, NicknameTakenError } from "../dist/index.js";
 
 const BASE = process.env.BASE ?? "http://localhost:8080";
 // App creation requires a logged-in account; create an app in the dashboard
@@ -51,5 +51,30 @@ try {
   notFound = e instanceof NotFoundError;
 }
 assert(notFound, "missing member throws NotFoundError");
+
+// Users & nicknames.
+const nick = `Tester-${Date.now()}`;
+const u = await lb.registerUser(nick);
+assert(u.user_id.startsWith("plr_") && u.nickname === nick, `registerUser ${JSON.stringify(u)}`);
+
+let conflict = false;
+try {
+  await lb.registerUser(nick.toUpperCase());
+} catch (e) {
+  conflict = e instanceof NicknameTakenError;
+}
+assert(conflict, "duplicate nickname throws NicknameTakenError");
+
+const byNick = await lb.getUserByNickname(nick.toLowerCase());
+assert(byNick.user_id === u.user_id, "getUserByNickname resolves case-insensitively");
+
+const renamed = await lb.renameUser(u.user_id, `${nick}-2`);
+assert(renamed.nickname === `${nick}-2`, "renameUser");
+
+await lb.submitScore("high", u.user_id, 999);
+await new Promise((res) => setTimeout(res, 1500));
+const enriched = await lb.getTop("high", 5);
+const mine = enriched.find((e) => e.member === u.user_id);
+assert(mine && mine.nickname === `${nick}-2`, `top carries nickname ${JSON.stringify(enriched)}`);
 
 console.log("TS SDK e2e: PASS ✅");
