@@ -138,7 +138,7 @@ Read entries include a `nickname` field for members registered via
 it. Nicknames are unique per app, case-insensitively; renames are O(1) and
 never touch board data.
 
-**Two auth planes** on `/v1/boards/*`: game clients use `Authorization: Bearer
+**Two auth planes** on the data plane (`/v1/boards/*` and `/v1/users*`): game clients use `Authorization: Bearer
 <api-key>` (or `X-API-Key`); the dashboard uses its session cookie plus an
 `X-App-Id` header for an app the logged-in user owns (CSRF required on mutations).
 

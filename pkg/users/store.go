@@ -19,7 +19,7 @@ import (
 var (
 	ErrNotFound        = errors.New("users: user not found")
 	ErrNicknameTaken   = errors.New("users: nickname already taken")
-	ErrInvalidNickname = errors.New("users: nickname must be 1-32 characters with no control characters")
+	ErrInvalidNickname = errors.New("users: nickname must be 1-32 characters with no control or format characters")
 	// ErrRenameContention is returned when a rename kept losing to concurrent
 	// renames of the same player and exhausted its retries.
 	ErrRenameContention = errors.New("users: rename contention, retry")
@@ -59,7 +59,7 @@ func normalizeNickname(nick string) (display, lower string, err error) {
 		return "", "", ErrInvalidNickname
 	}
 	for _, r := range display {
-		if unicode.IsControl(r) {
+		if unicode.Is(unicode.C, r) { // control, format, surrogate, private use
 			return "", "", ErrInvalidNickname
 		}
 	}

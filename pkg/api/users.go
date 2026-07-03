@@ -26,6 +26,8 @@ func writeUserErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusConflict, "nickname_taken")
 	case errors.Is(err, users.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "user_not_found")
+	case errors.Is(err, users.ErrRenameContention):
+		writeErr(w, http.StatusServiceUnavailable, "rename_contention")
 	default:
 		writeErr(w, http.StatusInternalServerError, err.Error())
 	}

@@ -40,7 +40,7 @@ func testStore(t *testing.T, s Store, app string) {
 	}
 
 	// Invalid nicknames are rejected before any state changes.
-	for _, bad := range []string{"", "   ", strings.Repeat("x", 33), "a\x00b", "line\nbreak"} {
+	for _, bad := range []string{"", "   ", strings.Repeat("x", 33), "a\x00b", "line\nbreak", "a‮b", "Ninja​"} {
 		if _, err := s.Create(ctx, app, bad); !errors.Is(err, ErrInvalidNickname) {
 			t.Errorf("Create(%q): got %v, want ErrInvalidNickname", bad, err)
 		}

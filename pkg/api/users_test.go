@@ -130,6 +130,12 @@ func TestNicknameEnrichment(t *testing.T) {
 		t.Fatalf("raw member should omit nickname: %s", body)
 	}
 
+	// page is enriched (same writeEntries path as top, asserted per spec).
+	resp, body = h.call(t, http.MethodGet, "/v1/boards/high/page?offset=0&limit=10", h.key(), nil)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"nickname":"Ninja"`) {
+		t.Fatalf("page enrichment: %d %s", resp.StatusCode, body)
+	}
+
 	// rank (single entry) is enriched too.
 	resp, body = h.call(t, http.MethodGet, "/v1/boards/high/rank?member="+u.UserID, h.key(), nil)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"nickname":"Ninja"`) {

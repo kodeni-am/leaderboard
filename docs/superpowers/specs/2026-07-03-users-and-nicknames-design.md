@@ -33,8 +33,9 @@ User {
   UpdatedAt time.Time
 }
 ```
-**Nickname rules:** trimmed; 1–32 chars after trim; no control characters;
-Unicode allowed. Uniqueness key is `strings.ToLower(nickname)`.
+**Nickname rules:** trimmed; 1–32 chars after trim; no control or format
+characters (Unicode category C); Unicode allowed. Uniqueness key is
+`strings.ToLower(nickname)`.
 
 ## Storage — new `pkg/users`
 Mirrors `pkg/accounts` / `pkg/tenancy`: `Store` interface + `memstore` +
