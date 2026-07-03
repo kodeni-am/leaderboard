@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -33,17 +34,18 @@ redis.call('SET', KEYS[3], ARGV[4])
 return 1
 `)
 
-// renameScript claims the new lowercased nickname, releases the old one (only
-// if this player still owns it), and updates the record + display mapping. A
-// case-only rename (same lower key) skips the claim and just updates display.
+// renameScript verifies the caller's snapshot of the old nickname still
+// belongs to this player (returns -1 so the caller re-reads and retries if
+// not), then claims the new lowercased nickname, releases the old one, and
+// updates the record + display mapping. A case-only rename (same lower key)
+// skips the claim/release but still requires a fresh snapshot.
 // KEYS: 1=nick hash, 2=names hash, 3=user record
 // ARGV: 1=new lower, 2=old lower, 3=id, 4=new display, 5=user JSON
 var renameScript = redis.NewScript(`
+if redis.call('HGET', KEYS[1], ARGV[2]) ~= ARGV[3] then return -1 end
 if ARGV[1] ~= ARGV[2] then
   if redis.call('HSETNX', KEYS[1], ARGV[1], ARGV[3]) == 0 then return 0 end
-  if redis.call('HGET', KEYS[1], ARGV[2]) == ARGV[3] then
-    redis.call('HDEL', KEYS[1], ARGV[2])
-  end
+  redis.call('HDEL', KEYS[1], ARGV[2])
 end
 redis.call('HSET', KEYS[2], ARGV[3], ARGV[4])
 redis.call('SET', KEYS[3], ARGV[5])
@@ -112,30 +114,42 @@ func (s *RedisStore) Rename(ctx context.Context, appID, id, nickname string) (Us
 	if err != nil {
 		return User{}, err
 	}
-	u, err := s.Get(ctx, appID, id)
-	if err != nil {
-		return User{}, err
+	// The old-nickname snapshot can go stale if the same player is renamed
+	// concurrently; the script detects that (-1) and we re-read and retry.
+	// Bounded generously: under N-way contention on the same player, the
+	// last contender to win can need up to N attempts (each retry can lose
+	// a single-elimination race against one of the others).
+	const maxAttempts = 32
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		u, err := s.Get(ctx, appID, id)
+		if err != nil {
+			return User{}, err
+		}
+		_, oldLower, err := normalizeNickname(u.Nickname)
+		if err != nil {
+			return User{}, err
+		}
+		u.Nickname = display
+		u.UpdatedAt = time.Now().UTC()
+		data, err := json.Marshal(u)
+		if err != nil {
+			return User{}, err
+		}
+		res, err := renameScript.Run(ctx, s.rdb,
+			[]string{nickKey(appID), namesKey(appID), playerKey(appID, id)},
+			lower, oldLower, id, display, data).Int()
+		if err != nil {
+			return User{}, err
+		}
+		switch res {
+		case 1:
+			return u, nil
+		case 0:
+			return User{}, ErrNicknameTaken
+		}
+		// res == -1: stale snapshot, retry.
 	}
-	_, oldLower, err := normalizeNickname(u.Nickname)
-	if err != nil {
-		return User{}, err
-	}
-	u.Nickname = display
-	u.UpdatedAt = time.Now().UTC()
-	data, err := json.Marshal(u)
-	if err != nil {
-		return User{}, err
-	}
-	ok, err := renameScript.Run(ctx, s.rdb,
-		[]string{nickKey(appID), namesKey(appID), playerKey(appID, id)},
-		lower, oldLower, id, display, data).Int()
-	if err != nil {
-		return User{}, err
-	}
-	if ok == 0 {
-		return User{}, ErrNicknameTaken
-	}
-	return u, nil
+	return User{}, errors.New("users: rename contention, retry")
 }
 
 func (s *RedisStore) Nicknames(ctx context.Context, appID string, ids []string) (map[string]string, error) {

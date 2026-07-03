@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -114,6 +115,50 @@ func testStore(t *testing.T, s Store, app string) {
 	}
 	if wins != 1 {
 		t.Errorf("concurrent create: %d wins, want exactly 1", wins)
+	}
+
+	// Concurrent renames of the same player must not orphan nickname claims.
+	vic, err := s.Create(ctx, app, "Racer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const renamers = 6
+	done := make(chan error, renamers)
+	for i := 0; i < renamers; i++ {
+		name := fmt.Sprintf("Racer-%d", i)
+		go func() {
+			_, err := s.Rename(ctx, app, vic.ID, name)
+			done <- err
+		}()
+	}
+	for i := 0; i < renamers; i++ {
+		if err := <-done; err != nil {
+			t.Errorf("concurrent rename: %v", err)
+		}
+	}
+	cur, err := s.Get(ctx, app, vic.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := 0
+	for i := 0; i < renamers; i++ {
+		name := fmt.Sprintf("Racer-%d", i)
+		got, err := s.GetByNickname(ctx, app, name)
+		switch {
+		case err == nil:
+			claims++
+			if got.ID != vic.ID || !strings.EqualFold(cur.Nickname, name) {
+				t.Errorf("claim %q inconsistent: maps to %s, record nick %q", name, got.ID, cur.Nickname)
+			}
+		case !errors.Is(err, ErrNotFound):
+			t.Errorf("GetByNickname(%q): %v", name, err)
+		}
+	}
+	if claims != 1 {
+		t.Errorf("player holds %d nickname claims, want exactly 1", claims)
+	}
+	if _, err := s.GetByNickname(ctx, app, "Racer"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("original nickname not released: %v", err)
 	}
 }
 
