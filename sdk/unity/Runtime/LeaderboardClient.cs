@@ -101,6 +101,44 @@ namespace OpenLeaderboard
             return e.entries ?? Array.Empty<RankEntry>();
         }
 
+        /// <summary>
+        /// Register a player: mints a user id (plr_...) and claims a nickname,
+        /// which is unique per app (case-insensitive). Submit scores with the
+        /// returned user_id as the member; reads then include the nickname.
+        /// Throws <see cref="NicknameTakenException"/> if the name is claimed.
+        /// </summary>
+        public async Task<UserInfo> RegisterUserAsync(string nickname)
+        {
+            var body = new UserRequest { nickname = nickname };
+            string resp = await SendAsync("POST", "/v1/users", UnityEngine.JsonUtility.ToJson(body));
+            return UnityEngine.JsonUtility.FromJson<UserInfo>(resp);
+        }
+
+        /// <summary>Fetch a registered player by id. Throws <see cref="NotFoundException"/> if absent.</summary>
+        public async Task<UserInfo> GetUserAsync(string userId)
+        {
+            string resp = await SendAsync("GET", "/v1/users/" + Esc(userId), null);
+            return UnityEngine.JsonUtility.FromJson<UserInfo>(resp);
+        }
+
+        /// <summary>Resolve a nickname (case-insensitive) to its player.</summary>
+        public async Task<UserInfo> GetUserByNicknameAsync(string nickname)
+        {
+            string resp = await SendAsync("GET", "/v1/users?nickname=" + Esc(nickname), null);
+            return UnityEngine.JsonUtility.FromJson<UserInfo>(resp);
+        }
+
+        /// <summary>
+        /// Change a player's nickname. The user id (and any HMAC signatures over
+        /// it) is unaffected. Throws <see cref="NicknameTakenException"/> on conflict.
+        /// </summary>
+        public async Task<UserInfo> RenameUserAsync(string userId, string nickname)
+        {
+            var body = new UserRequest { nickname = nickname };
+            string resp = await SendAsync("PATCH", "/v1/users/" + Esc(userId), UnityEngine.JsonUtility.ToJson(body));
+            return UnityEngine.JsonUtility.FromJson<UserInfo>(resp);
+        }
+
         /// <summary>Define a board. Typically a one-time dev/setup call.</summary>
         public async Task CreateBoardAsync(string board, string sortOrder = "desc", string updatePolicy = "best",
             string tieBreak = "lexical", params string[] windowKinds)
@@ -162,6 +200,7 @@ namespace OpenLeaderboard
                 long code = req.responseCode;
                 string text = req.downloadHandler != null ? req.downloadHandler.text : "";
                 if (code == 404) throw new NotFoundException(text);
+                if (code == 409) throw new NicknameTakenException(text);
                 if (code >= 400) throw new LeaderboardException(code, method + " " + path + " -> " + code + ": " + text);
                 return text;
             }

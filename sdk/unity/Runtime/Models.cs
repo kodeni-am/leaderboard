@@ -14,6 +14,7 @@ namespace OpenLeaderboard
         public double score;
         public long rank; // 1-based
         public bool exact; // false only for the sharded approximate tier
+        public string nickname; // null/empty unless the member is a registered player
     }
 
     /// <summary>Outcome of a score submission.</summary>
@@ -37,6 +38,20 @@ namespace OpenLeaderboard
     public class NotFoundException : LeaderboardException
     {
         public NotFoundException(string message) : base(404, message) { }
+    }
+
+    /// <summary>Raised when a nickname is already claimed in this app (HTTP 409).</summary>
+    public class NicknameTakenException : LeaderboardException
+    {
+        public NicknameTakenException(string message) : base(409, message) { }
+    }
+
+    /// <summary>A registered player: server-minted id + per-app-unique nickname.</summary>
+    [Serializable]
+    public class UserInfo
+    {
+        public string user_id;
+        public string nickname;
     }
 
     // ---- internal wire DTOs (field names match the JSON API exactly so
@@ -91,5 +106,11 @@ namespace OpenLeaderboard
         public string update_policy;
         public string tie_break;
         public WindowDef[] windows;
+    }
+
+    [Serializable]
+    internal class UserRequest
+    {
+        public string nickname;
     }
 }
