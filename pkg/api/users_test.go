@@ -66,7 +66,7 @@ func TestUserEndpoints(t *testing.T) {
 	}
 	json.Unmarshal(body, &u2)
 	resp, body = h.call(t, http.MethodPatch, "/v1/users/"+u2.UserID, h.key(), map[string]string{"nickname": "ninja"})
-	if resp.StatusCode != http.StatusConflict {
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(body), "nickname_taken") {
 		t.Fatalf("rename to taken: %d %s", resp.StatusCode, body)
 	}
 	resp, body = h.call(t, http.MethodPatch, "/v1/users/"+u2.UserID, h.key(), map[string]string{"nickname": "Voxel"})
