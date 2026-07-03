@@ -18,12 +18,16 @@ import (
 // ErrNotFound is returned when a member or board does not exist.
 var ErrNotFound = errors.New("sdk: not found")
 
+// ErrNicknameTaken is returned when a nickname is already claimed in the app.
+var ErrNicknameTaken = errors.New("sdk: nickname already taken")
+
 // Entry mirrors a ranking entry returned by the API.
 type Entry struct {
-	Member string  `json:"member"`
-	Score  float64 `json:"score"`
-	Rank   int64   `json:"rank"`
-	Exact  bool    `json:"exact"`
+	Member   string  `json:"member"`
+	Score    float64 `json:"score"`
+	Rank     int64   `json:"rank"`
+	Exact    bool    `json:"exact"`
+	Nickname string  `json:"nickname,omitempty"` // set for registered players
 }
 
 // Window is one temporal dimension when defining a board.
@@ -100,6 +104,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	data, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == http.StatusNotFound {
 		return resp.StatusCode, ErrNotFound
+	}
+	if resp.StatusCode == http.StatusConflict {
+		return resp.StatusCode, ErrNicknameTaken
 	}
 	if resp.StatusCode >= 400 {
 		return resp.StatusCode, fmt.Errorf("sdk: %s %s -> %d: %s", method, path, resp.StatusCode, string(data))
@@ -198,4 +205,45 @@ func (c *Client) Friends(ctx context.Context, board string, memberIDs []string, 
 	path := "/v1/boards/" + url.PathEscape(board) + "/friends?" + opts.values().Encode()
 	_, err := c.do(ctx, http.MethodPost, path, map[string]any{"members": memberIDs}, &out)
 	return out.Entries, err
+}
+
+// User is a registered player: a server-minted ID plus a nickname unique
+// within the app (case-insensitively). Submit scores with UserID as the
+// member and leaderboard reads return the nickname alongside it.
+type User struct {
+	UserID    string    `json:"user_id"`
+	Nickname  string    `json:"nickname"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// RegisterUser mints a player and claims nickname. Returns ErrNicknameTaken
+// if the name is already claimed in this app.
+func (c *Client) RegisterUser(ctx context.Context, nickname string) (User, error) {
+	var u User
+	_, err := c.do(ctx, http.MethodPost, "/v1/users", map[string]string{"nickname": nickname}, &u)
+	return u, err
+}
+
+// GetUser fetches a registered player by id. Returns ErrNotFound if absent.
+func (c *Client) GetUser(ctx context.Context, id string) (User, error) {
+	var u User
+	_, err := c.do(ctx, http.MethodGet, "/v1/users/"+url.PathEscape(id), nil, &u)
+	return u, err
+}
+
+// UserByNickname resolves a nickname (case-insensitive) to its player.
+func (c *Client) UserByNickname(ctx context.Context, nickname string) (User, error) {
+	var u User
+	_, err := c.do(ctx, http.MethodGet, "/v1/users?nickname="+url.QueryEscape(nickname), nil, &u)
+	return u, err
+}
+
+// RenameUser changes a player's nickname. Returns ErrNicknameTaken on
+// conflict. The player id (and therefore board data and HMAC signatures) is
+// unaffected by renames.
+func (c *Client) RenameUser(ctx context.Context, id, nickname string) (User, error) {
+	var u User
+	_, err := c.do(ctx, http.MethodPatch, "/v1/users/"+url.PathEscape(id), map[string]string{"nickname": nickname}, &u)
+	return u, err
 }

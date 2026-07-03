@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,5 +107,78 @@ func TestSDKAgainstServer(t *testing.T) {
 	}
 	if len(fr) != 2 || fr[0].Member != "luigi" {
 		t.Errorf("friends = %+v", fr)
+	}
+}
+
+func TestSDKUsers(t *testing.T) {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		addr = "localhost:6379"
+	}
+	rdb := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: []string{addr}})
+	pctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := rdb.Ping(pctx).Err(); err != nil {
+		t.Skipf("redis not available: %v", err)
+	}
+	ctx := context.Background()
+
+	eng := engine.NewRedisEngine(rdb)
+	store := tenancy.NewMemStore()
+	registry := ingest.NewStaticRegistry()
+	log := ingest.NewMemLog()
+	ing := ingest.NewIngestor(log, registry, ingest.NewMemDeduper())
+	cons := ingest.NewConsumer(log, registry, eng)
+	srv := api.NewServer(eng, ing, store, registry, nil, false, users.NewMemStore())
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	app, key, err := store.CreateApp(ctx, "usr_sdk_test", "Racer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = eng.Reset(ctx, engine.Board{Key: engine.BoardKey{App: app.ID, Board: "high", Segment: "all", Window: "all"}})
+	})
+	c := New(ts.URL, key)
+	if err := c.CreateBoard(ctx, BoardDef{Board: "high"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Register + duplicate -> ErrNicknameTaken.
+	u, err := c.RegisterUser(ctx, "Ninja")
+	if err != nil || !strings.HasPrefix(u.UserID, "plr_") || u.Nickname != "Ninja" {
+		t.Fatalf("RegisterUser: %+v / %v", u, err)
+	}
+	if _, err := c.RegisterUser(ctx, "ninja"); !errors.Is(err, ErrNicknameTaken) {
+		t.Errorf("dup register: %v", err)
+	}
+
+	// Lookup both ways.
+	if got, err := c.GetUser(ctx, u.UserID); err != nil || got.Nickname != "Ninja" {
+		t.Fatalf("GetUser: %+v / %v", got, err)
+	}
+	if got, err := c.UserByNickname(ctx, "NINJA"); err != nil || got.UserID != u.UserID {
+		t.Fatalf("UserByNickname: %+v / %v", got, err)
+	}
+	if _, err := c.GetUser(ctx, "plr_nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetUser unknown: %v", err)
+	}
+
+	// Rename.
+	if ren, err := c.RenameUser(ctx, u.UserID, "Shadow"); err != nil || ren.Nickname != "Shadow" {
+		t.Fatalf("RenameUser: %+v / %v", ren, err)
+	}
+
+	// Read enrichment: submit as the player, drain, and read the nickname back.
+	if _, err := c.Submit(ctx, "high", Submission{Member: u.UserID, Score: 900}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cons.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	top, err := c.Top(ctx, "high", 10, QueryOpts{})
+	if err != nil || len(top) != 1 || top[0].Nickname != "Shadow" {
+		t.Fatalf("Top with nickname: %+v / %v", top, err)
 	}
 }
