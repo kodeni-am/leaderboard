@@ -9,7 +9,9 @@ player plus a friendly **nickname that is unique per app**. Leaderboard reads
 return the nickname alongside the raw member so games can render human names.
 
 ## Decisions (made during brainstorming)
-1. **Server-minted user IDs** — games register a user and receive `usr_<hex>`;
+1. **Server-minted user IDs** — games register a user and receive `plr_<hex>`
+   (`plr_` not `usr_`: dashboard account IDs already use the `usr_` prefix in
+   `pkg/accounts`, and the two identity types must stay distinguishable);
    they then submit scores with that ID as the `member`.
 2. **Lenient compatibility** — unregistered, arbitrary `member` strings keep
    working exactly as today. Registered users additionally get a nickname in
@@ -24,7 +26,7 @@ return the nickname alongside the raw member so games can render human names.
 ## Data model
 ```
 User {
-  ID        string  // "usr_" + 12 hex, minted like tenancy's "app_" IDs
+  ID        string  // "plr_" + 12 hex, minted like tenancy's "app_" IDs
   AppID     string
   Nickname  string  // display form as entered
   CreatedAt time.Time
@@ -41,9 +43,9 @@ Mirrors `pkg/accounts` / `pkg/tenancy`: `Store` interface + `memstore` +
 Keys carry a `{app}` hash tag so all of an app's user keys share a cluster
 slot, allowing atomic Lua scripts:
 ```
-usr:{<app>}:user:<id>   JSON user record
-usr:{<app>}:names       HASH id -> nickname          (batch enrichment)
-usr:{<app>}:nick        HASH lower(nick) -> id       (uniqueness claim)
+plr:{<app>}:user:<id>   JSON user record
+plr:{<app>}:names       HASH id -> nickname          (batch enrichment)
+plr:{<app>}:nick        HASH lower(nick) -> id       (uniqueness claim)
 ```
 - **Create** (Lua, atomic): `HSETNX` on the nick hash — if the claim fails,
   return conflict (→ 409); otherwise write the record and the names entry.
@@ -67,7 +69,7 @@ Error responses follow the existing API error shape with stable error codes
 - `engine.RankEntry` gains `Nickname string \`json:"nickname,omitempty"\``.
   The engine never populates it (stays tenancy-agnostic).
 - An API-layer helper takes any `[]RankEntry`, collects the member strings,
-  issues one `HMGET usr:{app}:names m1 m2 ...`, and fills matches.
+  issues one `HMGET plr:{app}:names m1 m2 ...`, and fills matches.
 - Applied to `rank`, `top`, `page`, `neighbors`, `friends`.
 - Unregistered members simply omit the `nickname` key in JSON.
 - Cost: one extra pipelined Redis round-trip per read request (sub-ms), zero
@@ -75,7 +77,7 @@ Error responses follow the existing API error shape with stable error codes
 
 ## Submit path
 Unchanged. `member` remains an opaque string; registered games pass the
-`usr_...` ID. HMAC signing is unaffected — it signs the member string, which
+`plr_...` ID. HMAC signing is unaffected — it signs the member string, which
 is now a stable ID, so **renames never invalidate signatures**.
 
 ## SDKs & dashboard
