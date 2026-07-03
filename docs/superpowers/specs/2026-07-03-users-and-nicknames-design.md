@@ -1,7 +1,7 @@
 # Users & Nicknames — Design Spec
 
 **Date:** 2026-07-03
-**Status:** Draft — pending user review
+**Status:** Approved — implemented (branch `feat/users-nicknames`)
 
 ## Goal
 Introduce a **user** entity on the data plane: a server-minted unique ID per
