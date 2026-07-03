@@ -1,6 +1,6 @@
 {
   "name": "@openleaderboard/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "TypeScript client for the OpenLeaderboard API (browser + Node 18+).",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,7 +12,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -20,7 +22,12 @@
     "test:hmac": "node test/hmac.mjs",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["leaderboard", "gaming", "ranking", "api"],
+  "keywords": [
+    "leaderboard",
+    "gaming",
+    "ranking",
+    "api"
+  ],
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -28,8 +35,16 @@
     "directory": "sdk/typescript"
   },
   "homepage": "https://github.com/kodeni-am/leaderboard/tree/main/sdk/typescript#readme",
-  "bugs": { "url": "https://github.com/kodeni-am/leaderboard/issues" },
-  "publishConfig": { "access": "public" },
-  "engines": { "node": ">=18" },
-  "devDependencies": { "typescript": "^5.5.0" }
+  "bugs": {
+    "url": "https://github.com/kodeni-am/leaderboard/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
 }
