@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/kodeni-am/leaderboard/pkg/engine"
 )
 
 func TestUserEndpoints(t *testing.T) {
@@ -76,4 +79,85 @@ func TestUserEndpoints(t *testing.T) {
 	// (Auth middleware behavior is covered by the existing data-plane tests;
 	// the harness client carries a session cookie after onboard, so an
 	// "unauthenticated" request here wouldn't actually be unauthenticated.)
+}
+
+func TestNicknameEnrichment(t *testing.T) {
+	h := newHarness(t)
+	h.onboard(t, "enrich@example.com")
+	t.Cleanup(func() {
+		_ = h.eng.Reset(context.Background(), engine.Board{Key: engine.BoardKey{App: h.appID, Board: "high", Segment: "all", Window: "all"}})
+	})
+
+	if resp, body := h.call(t, http.MethodPost, "/v1/boards", h.key(), map[string]any{"board": "high"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create board: %d %s", resp.StatusCode, body)
+	}
+
+	// One registered player, one raw member.
+	resp, body := h.call(t, http.MethodPost, "/v1/users", h.key(), map[string]string{"nickname": "Ninja"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register: %d %s", resp.StatusCode, body)
+	}
+	var u struct {
+		UserID string `json:"user_id"`
+	}
+	json.Unmarshal(body, &u)
+
+	for member, score := range map[string]float64{u.UserID: 500, "raw-anon": 300} {
+		if resp, body := h.call(t, http.MethodPost, "/v1/boards/high/scores", h.key(), map[string]any{"member": member, "score": score}); resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("submit %s: %d %s", member, resp.StatusCode, body)
+		}
+	}
+	if err := h.cons.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// top: the registered member carries its nickname; the raw one omits it.
+	resp, body = h.call(t, http.MethodGet, "/v1/boards/high/top?n=10", h.key(), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("top: %d %s", resp.StatusCode, body)
+	}
+	var top struct {
+		Entries []struct {
+			Member   string `json:"member"`
+			Nickname string `json:"nickname"`
+		} `json:"entries"`
+	}
+	json.Unmarshal(body, &top)
+	if len(top.Entries) != 2 || top.Entries[0].Member != u.UserID || top.Entries[0].Nickname != "Ninja" {
+		t.Fatalf("top enrichment: %s", body)
+	}
+	if top.Entries[1].Nickname != "" || strings.Contains(jsonEntry(t, body, 1), `"nickname"`) {
+		t.Fatalf("raw member should omit nickname: %s", body)
+	}
+
+	// rank (single entry) is enriched too.
+	resp, body = h.call(t, http.MethodGet, "/v1/boards/high/rank?member="+u.UserID, h.key(), nil)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"nickname":"Ninja"`) {
+		t.Fatalf("rank enrichment: %d %s", resp.StatusCode, body)
+	}
+
+	// neighbors is enriched.
+	resp, body = h.call(t, http.MethodGet, "/v1/boards/high/neighbors?member="+u.UserID+"&k=2", h.key(), nil)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"nickname":"Ninja"`) {
+		t.Fatalf("neighbors enrichment: %d %s", resp.StatusCode, body)
+	}
+
+	// friends is enriched.
+	resp, body = h.call(t, http.MethodPost, "/v1/boards/high/friends", h.key(), map[string]any{"members": []string{u.UserID, "raw-anon"}})
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"nickname":"Ninja"`) {
+		t.Fatalf("friends enrichment: %d %s", resp.StatusCode, body)
+	}
+}
+
+// jsonEntry re-marshals entry i of an {"entries": [...]} body so tests can
+// assert on the raw presence/absence of a key.
+func jsonEntry(t *testing.T, body []byte, i int) string {
+	t.Helper()
+	var out struct {
+		Entries []json.RawMessage `json:"entries"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil || len(out.Entries) <= i {
+		t.Fatalf("jsonEntry: %v %s", err, body)
+	}
+	return string(out.Entries[i])
 }

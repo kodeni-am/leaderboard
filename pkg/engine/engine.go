@@ -33,6 +33,9 @@ type RankEntry struct {
 	Score  float64 `json:"score"` // decoded primary score
 	Rank   int64   `json:"rank"`  // 1-based
 	Exact  bool    `json:"exact"` // false only for the sharded approximate tier
+	// Nickname is a friendly display name attached by the API layer from the
+	// per-app player registry; the engine itself never populates it.
+	Nickname string `json:"nickname,omitempty"`
 }
 
 // SubmitResult reports the outcome of a write.

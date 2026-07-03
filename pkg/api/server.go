@@ -476,7 +476,9 @@ func (s *Server) handleRank(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, entry)
+	enriched := []engine.RankEntry{entry}
+	s.enrichEntries(r, enriched)
+	writeJSON(w, http.StatusOK, enriched[0])
 }
 
 func (s *Server) handleTop(w http.ResponseWriter, r *http.Request) {
@@ -485,7 +487,7 @@ func (s *Server) handleTop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries, err := s.eng.TopN(r.Context(), b, intParam(r, "n", 10))
-	s.writeEntries(w, entries, err)
+	s.writeEntries(w, r, entries, err)
 }
 
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
@@ -494,7 +496,7 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries, err := s.eng.Page(r.Context(), b, intParam(r, "offset", 0), intParam(r, "limit", 20))
-	s.writeEntries(w, entries, err)
+	s.writeEntries(w, r, entries, err)
 }
 
 func (s *Server) handleNeighbors(w http.ResponseWriter, r *http.Request) {
@@ -512,7 +514,7 @@ func (s *Server) handleNeighbors(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "member not found")
 		return
 	}
-	s.writeEntries(w, entries, err)
+	s.writeEntries(w, r, entries, err)
 }
 
 type friendsReq struct {
@@ -530,7 +532,7 @@ func (s *Server) handleFriends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries, err := s.eng.FriendRank(r.Context(), b, req.Members)
-	s.writeEntries(w, entries, err)
+	s.writeEntries(w, r, entries, err)
 }
 
 // readBoard resolves the board for the authed app and builds the physical board
@@ -546,10 +548,32 @@ func (s *Server) readBoard(w http.ResponseWriter, r *http.Request) (engine.Board
 	return physicalBoard(lb, r), true
 }
 
-func (s *Server) writeEntries(w http.ResponseWriter, entries []engine.RankEntry, err error) {
+// enrichEntries attaches registered nicknames to entries with one batched
+// lookup. Best-effort: a failed lookup leaves entries unenriched rather than
+// failing the read — names are auxiliary to ranks.
+func (s *Server) enrichEntries(r *http.Request, entries []engine.RankEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	app, _ := tenancy.AppFromContext(r.Context())
+	ids := make([]string, len(entries))
+	for i := range entries {
+		ids[i] = entries[i].Member
+	}
+	names, err := s.users.Nicknames(r.Context(), app.ID, ids)
+	if err != nil {
+		return
+	}
+	for i := range entries {
+		entries[i].Nickname = names[entries[i].Member]
+	}
+}
+
+func (s *Server) writeEntries(w http.ResponseWriter, r *http.Request, entries []engine.RankEntry, err error) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.enrichEntries(r, entries)
 	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
 }
