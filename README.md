@@ -102,6 +102,12 @@ curl -s "$BASE/v1/boards/high/rank?member=bob"          -H "Authorization: Beare
 curl -s "$BASE/v1/boards/high/neighbors?member=bob&k=5" -H "Authorization: Bearer $KEY"
 curl -s "$BASE/v1/boards/high/top?n=10&window=daily"           -H "Authorization: Bearer $KEY"
 curl -s "$BASE/v1/boards/high/top?n=10&segment=region=eu"      -H "Authorization: Bearer $KEY"
+
+# Optional player registry: register once, then submit with the minted id.
+curl -s -X POST $BASE/v1/users -H "Authorization: Bearer $KEY" \
+  -d '{"nickname":"Ninja"}'                    # -> {"user_id":"plr_...","nickname":"Ninja",...}
+curl -s -X POST $BASE/v1/boards/high/scores -H "Authorization: Bearer $KEY" \
+  -d '{"member":"plr_...","score":1500}'
 ```
 
 ## API
@@ -120,9 +126,17 @@ curl -s "$BASE/v1/boards/high/top?n=10&segment=region=eu"      -H "Authorization
 | `GET /v1/boards/{board}/page?offset=&limit=` | Paginate |
 | `GET /v1/boards/{board}/neighbors?member=&k=` | Me ± k |
 | `POST /v1/boards/{board}/friends` | Rank an explicit member list |
+| `POST /v1/users` | Register a player (server-minted id + nickname, unique per app) |
+| `GET /v1/users/{id}` · `GET /v1/users?nickname=` | Fetch / resolve a player |
+| `PATCH /v1/users/{id}` | Rename a player (id and board data unaffected) |
 
 All query endpoints accept `segment=` and `window=` (a literal id like
 `d=2026-06-13`, or a cadence keyword `daily`/`weekly`/`monthly`).
+
+Read entries include a `nickname` field for members registered via
+`/v1/users`; raw (unregistered) member strings keep working and simply omit
+it. Nicknames are unique per app, case-insensitively; renames are O(1) and
+never touch board data.
 
 **Two auth planes** on `/v1/boards/*`: game clients use `Authorization: Bearer
 <api-key>` (or `X-API-Key`); the dashboard uses its session cookie plus an
