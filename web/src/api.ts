@@ -28,6 +28,7 @@ export interface RankEntry {
   score: number;
   rank: number;
   exact: boolean;
+  nickname?: string;
 }
 export interface BoardDef {
   board: string;
@@ -47,6 +48,10 @@ export interface BoardSummary {
 export interface QueryOpts {
   segment?: string;
   window?: string;
+}
+export interface UserInfo {
+  user_id: string;
+  nickname: string;
 }
 
 export class ApiError extends Error {
@@ -116,6 +121,8 @@ export const api = {
   createBoard: (appId: string, def: BoardDef) => req<unknown>("POST", "/v1/boards", def, appHdr(appId)),
   submit: (appId: string, board: string, member: string, score: number, segments?: string[]) =>
     req<{ accepted: boolean }>("POST", `/v1/boards/${encodeURIComponent(board)}/scores`, { member, score, segments }, appHdr(appId)),
+  registerUser: (appId: string, nickname: string) =>
+    req<UserInfo>("POST", "/v1/users", { nickname }, appHdr(appId)),
   top: (appId: string, board: string, n: number, q?: QueryOpts) =>
     req<Entries>("GET", `/v1/boards/${encodeURIComponent(board)}/top?n=${n}${qs(q)}`, undefined, appHdr(appId)),
   rank: (appId: string, board: string, member: string, q?: QueryOpts) =>

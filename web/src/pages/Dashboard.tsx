@@ -582,12 +582,16 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
         {entries.length === 0 && !err && <div className="dim" style={{ padding: 18, fontSize: 14 }}>No entries in this window yet — submit a score above.</div>}
         {entries.length > 0 && (
           <table className="lb">
-            <thead><tr><th>Rank</th><th>Member</th><th style={{ textAlign: "right" }}>Score</th></tr></thead>
+            <thead><tr><th>Rank</th><th>Player</th><th style={{ textAlign: "right" }}>Score</th></tr></thead>
             <tbody>
               {entries.map((e) => (
                 <tr key={e.member}>
                   <td className="rank">{String(e.rank).padStart(2, "0")}</td>
-                  <td className="mono">{e.member}</td>
+                  <td>
+                    {e.nickname
+                      ? <>{e.nickname} <span className="dim mono" style={{ fontSize: 12 }}>{e.member}</span></>
+                      : <span className="mono">{e.member}</span>}
+                  </td>
                   <td className="score">{e.score.toLocaleString()}</td>
                 </tr>
               ))}
@@ -599,26 +603,56 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
   );
 }
 
-function TestSubmit({ board, segment, busy, onSubmit }: { appId: string; board: string; segment: string; busy: boolean; onSubmit: (m: string, s: number) => void }) {
+function TestSubmit({ appId, board, segment, busy, onSubmit }: { appId: string; board: string; segment: string; busy: boolean; onSubmit: (m: string, s: number) => void }) {
   const [member, setMember] = useState("");
   const [score, setScore] = useState("");
+  const [nickname, setNickname] = useState("");
+  const [regMsg, setRegMsg] = useState("");
   const dest = `${board} · all windows · ${segment || "all"} segment`;
+
+  // Registers a player and drops the minted id into the member field, so a
+  // test submit exercises the nickname-enriched path.
+  async function register() {
+    if (!nickname) return;
+    try {
+      const u = await api.registerUser(appId, nickname);
+      setMember(u.user_id);
+      setRegMsg(`${u.nickname} → ${u.user_id}`);
+    } catch (e) {
+      setRegMsg((e as ApiError).status === 409 ? "Nickname taken — try another." : (e as ApiError).message);
+    }
+  }
+
   return (
-    <form
-      className="panel row collapse"
-      style={{ gap: 10, alignItems: "flex-end" }}
-      onSubmit={(e) => { e.preventDefault(); if (member && score !== "") onSubmit(member, Number(score)); }}
-    >
-      <label className="field" style={{ margin: 0, flex: 1 }}>
-        <span>Member</span>
-        <input value={member} onChange={(e) => setMember(e.target.value)} placeholder="player-1" />
-      </label>
-      <label className="field" style={{ margin: 0, width: 130 }}>
-        <span>Score</span>
-        <input value={score} onChange={(e) => setScore(e.target.value)} placeholder="1500" type="number" />
-      </label>
-      <button className="btn" type="submit" disabled={busy} title={`Submit to ${dest}`}>{busy ? "…" : "Submit"}</button>
-    </form>
+    <div className="stack-sm">
+      <form
+        className="panel row collapse"
+        style={{ gap: 10, alignItems: "flex-end" }}
+        onSubmit={(e) => { e.preventDefault(); if (member && score !== "") onSubmit(member, Number(score)); }}
+      >
+        <label className="field" style={{ margin: 0, flex: 1 }}>
+          <span>Member</span>
+          <input value={member} onChange={(e) => setMember(e.target.value)} placeholder="player-1 or plr_…" />
+        </label>
+        <label className="field" style={{ margin: 0, width: 130 }}>
+          <span>Score</span>
+          <input value={score} onChange={(e) => setScore(e.target.value)} placeholder="1500" type="number" />
+        </label>
+        <button className="btn" type="submit" disabled={busy} title={`Submit to ${dest}`}>{busy ? "…" : "Submit"}</button>
+      </form>
+      <form
+        className="panel row collapse"
+        style={{ gap: 10, alignItems: "flex-end" }}
+        onSubmit={(e) => { e.preventDefault(); void register(); }}
+      >
+        <label className="field" style={{ margin: 0, flex: 1 }}>
+          <span>Register a player (nickname → member id)</span>
+          <input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="Ninja" />
+        </label>
+        <button className="btn btn-ghost" type="submit">Register</button>
+        <div className="mono dim" style={{ minWidth: 150, textAlign: "right", fontSize: 12 }}>{regMsg}</div>
+      </form>
+    </div>
   );
 }
 
@@ -647,7 +681,7 @@ function RankSearch({ appId, board, window, segment }: { appId: string; board: s
       <button className="btn btn-ghost" type="submit">Find rank</button>
       <div className="mono" style={{ minWidth: 150, textAlign: "right", fontSize: 14 }}>
         {result ? (
-          <span><span className="accent">#{result.rank}</span> · {result.score.toLocaleString()}</span>
+          <span>{result.nickname ? `${result.nickname} · ` : ""}<span className="accent">#{result.rank}</span> · {result.score.toLocaleString()}</span>
         ) : (
           <span className="dim">{msg}</span>
         )}
