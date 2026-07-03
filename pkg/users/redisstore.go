@@ -3,7 +3,6 @@ package users
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -149,7 +148,7 @@ func (s *RedisStore) Rename(ctx context.Context, appID, id, nickname string) (Us
 		}
 		// res == -1: stale snapshot, retry.
 	}
-	return User{}, errors.New("users: rename contention, retry")
+	return User{}, ErrRenameContention
 }
 
 func (s *RedisStore) Nicknames(ctx context.Context, appID string, ids []string) (map[string]string, error) {

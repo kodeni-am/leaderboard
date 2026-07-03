@@ -20,6 +20,9 @@ var (
 	ErrNotFound        = errors.New("users: user not found")
 	ErrNicknameTaken   = errors.New("users: nickname already taken")
 	ErrInvalidNickname = errors.New("users: nickname must be 1-32 characters with no control characters")
+	// ErrRenameContention is returned when a rename kept losing to concurrent
+	// renames of the same player and exhausted its retries.
+	ErrRenameContention = errors.New("users: rename contention, retry")
 )
 
 // User is a registered player within one app.
@@ -41,6 +44,7 @@ type Store interface {
 	// GetByNickname resolves a nickname case-insensitively, or ErrNotFound.
 	GetByNickname(ctx context.Context, appID, nickname string) (User, error)
 	// Rename atomically claims the new nickname and releases the old one.
+	// Implementations may return ErrRenameContention if concurrent renames of the same player exhaust retries.
 	Rename(ctx context.Context, appID, id, nickname string) (User, error)
 	// Nicknames returns id -> display nickname for the ids that are
 	// registered players; unregistered ids are simply absent from the map.
