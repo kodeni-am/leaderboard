@@ -20,6 +20,7 @@ import (
 	"github.com/kodeni-am/leaderboard/pkg/ingest"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
 	"github.com/kodeni-am/leaderboard/pkg/trust"
+	"github.com/kodeni-am/leaderboard/pkg/users"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -90,7 +91,7 @@ func newHarnessWith(t *testing.T, signingMaster string) *harness {
 	mail := &captureSender{}
 	mem := accounts.NewMemStores()
 	acct := accounts.NewService(mem, mem, mem, mail, accounts.Config{BaseURL: "http://app"})
-	srv := NewServer(eng, ing, store, registry, acct, false)
+	srv := NewServer(eng, ing, store, registry, acct, false, users.NewMemStore())
 	if signingMaster != "" {
 		srv.SetSigningMaster(signingMaster, 5*time.Minute)
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/kodeni-am/leaderboard/pkg/engine"
 	"github.com/kodeni-am/leaderboard/pkg/ingest"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
+	"github.com/kodeni-am/leaderboard/pkg/users"
 	"github.com/kodeni-am/leaderboard/pkg/window"
 	"github.com/redis/go-redis/v9"
 )
@@ -104,8 +105,9 @@ func main() {
 
 	rs := accounts.NewRedisStores(rdb)
 	acctSvc := accounts.NewService(rs, rs, rs, buildMailer(), accounts.Config{BaseURL: publicURL})
+	usrStore := users.NewRedisStore(rdb)
 
-	srv := api.NewServer(eng, ing, store, registry, acctSvc, secureCk)
+	srv := api.NewServer(eng, ing, store, registry, acctSvc, secureCk, usrStore)
 	if signingKey != "" {
 		srv.SetSigningMaster(signingKey, 5*time.Minute)
 		log.Print("per-app HMAC signing: AVAILABLE (apps opt in via require_signing)")

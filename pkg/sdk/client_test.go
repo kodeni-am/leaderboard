@@ -12,6 +12,7 @@ import (
 	"github.com/kodeni-am/leaderboard/pkg/engine"
 	"github.com/kodeni-am/leaderboard/pkg/ingest"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
+	"github.com/kodeni-am/leaderboard/pkg/users"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -34,7 +35,7 @@ func TestSDKAgainstServer(t *testing.T) {
 	log := ingest.NewMemLog()
 	ing := ingest.NewIngestor(log, registry, ingest.NewMemDeduper())
 	cons := ingest.NewConsumer(log, registry, eng)
-	srv := api.NewServer(eng, ing, store, registry, nil, false)
+	srv := api.NewServer(eng, ing, store, registry, nil, false, users.NewMemStore())
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 

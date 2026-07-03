@@ -19,6 +19,7 @@ import (
 	"github.com/kodeni-am/leaderboard/pkg/ingest"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
 	"github.com/kodeni-am/leaderboard/pkg/trust"
+	"github.com/kodeni-am/leaderboard/pkg/users"
 	"github.com/kodeni-am/leaderboard/pkg/window"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -31,6 +32,7 @@ type Server struct {
 	store         tenancy.Store
 	registry      *ingest.StaticRegistry
 	accounts      *accounts.Service
+	users         users.Store
 	secureCookies bool            // set Secure on auth cookies (true behind TLS)
 	signingMaster string          // master key; per-app secrets derived from it. "" disables signing.
 	signingSkew   time.Duration   // allowed timestamp skew for signed submissions
@@ -99,7 +101,7 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 		active := s.corsHeaders(w, r)
 		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 			if active {
-				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, X-App-Id, X-CSRF-Token")
 				w.Header().Set("Access-Control-Max-Age", "600")
 			}
@@ -110,8 +112,8 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 	})
 }
 
-func NewServer(eng engine.RankingEngine, ing *ingest.Ingestor, store tenancy.Store, registry *ingest.StaticRegistry, acct *accounts.Service, secureCookies bool) *Server {
-	return &Server{eng: eng, ing: ing, store: store, registry: registry, accounts: acct, secureCookies: secureCookies}
+func NewServer(eng engine.RankingEngine, ing *ingest.Ingestor, store tenancy.Store, registry *ingest.StaticRegistry, acct *accounts.Service, secureCookies bool, usrs users.Store) *Server {
+	return &Server{eng: eng, ing: ing, store: store, registry: registry, accounts: acct, secureCookies: secureCookies, users: usrs}
 }
 
 // SetSigningMaster configures the master key from which per-app signing secrets
@@ -193,6 +195,12 @@ func (s *Server) Handler() http.Handler {
 	dataPlane("GET /v1/boards/{board}/page", s.handlePage)
 	dataPlane("GET /v1/boards/{board}/neighbors", s.handleNeighbors)
 	dataPlane("POST /v1/boards/{board}/friends", s.handleFriends)
+
+	// Player registry (optional; nicknames unique per app).
+	dataPlane("POST /v1/users", s.handleCreateUser)
+	dataPlane("GET /v1/users", s.handleLookupUser)
+	dataPlane("GET /v1/users/{id}", s.handleGetUser)
+	dataPlane("PATCH /v1/users/{id}", s.handleRenameUser)
 
 	// Serve the dashboard SPA from the same origin (catch-all, lowest priority).
 	if s.webDir != "" {
