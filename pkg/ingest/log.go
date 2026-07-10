@@ -17,6 +17,13 @@ import (
 	"time"
 )
 
+// Record op types. The zero value is a score submit, so every pre-existing
+// log entry (which has no op field) decodes as a submit.
+const (
+	OpSubmit = ""       // score submission (default)
+	OpRemove = "remove" // tombstone: remove Member's entry from Board everywhere
+)
+
 // Record is one score event as stored in the durable log.
 type Record struct {
 	ID       string    `json:"id"` // assigned by the log; acts as the read cursor
@@ -27,6 +34,9 @@ type Record struct {
 	Time     time.Time `json:"time"`
 	Segments []string  `json:"segments,omitempty"`
 	Idem     string    `json:"idem,omitempty"` // client dedup key (optional)
+	// Op discriminates the record type: OpSubmit ("") or OpRemove. Tombstones
+	// use App/Board/Member; Score and Segments are meaningless on them.
+	Op string `json:"op,omitempty"`
 }
 
 // Log is the durable, ordered, append-only, partitioned event log.

@@ -51,3 +51,20 @@ func (i *Ingestor) Submit(ctx context.Context, rec Record) (accepted bool, err e
 	}
 	return true, nil
 }
+
+// Remove durably appends a removal tombstone for (rec.Board, rec.Member).
+// It partitions like the member's submits on that board, so consumers and
+// rebuild apply it in order relative to them. Applying the removal to the
+// ranking tier happens asynchronously in the consumer; callers wanting
+// read-your-writes additionally apply it synchronously (removal is
+// idempotent, so double application is harmless).
+func (i *Ingestor) Remove(ctx context.Context, rec Record) error {
+	if _, ok := i.resolver.Resolve(rec.App, rec.Board); !ok {
+		return ErrUnknownBoard
+	}
+	rec.Op = OpRemove
+	if rec.Time.IsZero() {
+		rec.Time = time.Now().UTC()
+	}
+	return i.log.Append(ctx, &rec)
+}

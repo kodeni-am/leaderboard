@@ -2,7 +2,9 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,5 +112,50 @@ func TestIngestorUnmarksOnAppendFailure(t *testing.T) {
 	// The idem key must have been rolled back so a retry isn't silently dropped.
 	if seen, _ := d.SeenOrMark(ctx, "g:retry-me", time.Minute); seen {
 		t.Error("idem key was not rolled back after append failure")
+	}
+}
+
+func TestRecordOpBackwardCompatible(t *testing.T) {
+	// Pre-existing log entries have no "op" field and must decode as submits.
+	var rec Record
+	if err := json.Unmarshal([]byte(`{"app":"a","board":"b","member":"m","score":5}`), &rec); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Op != OpSubmit {
+		t.Fatalf("legacy record decoded with op %q, want OpSubmit", rec.Op)
+	}
+	// A submit record must not serialize an op field (omitempty).
+	data, _ := json.Marshal(Record{App: "a", Board: "b", Member: "m"})
+	if strings.Contains(string(data), `"op"`) {
+		t.Fatalf("submit record serialized an op field: %s", data)
+	}
+	// A tombstone round-trips its op.
+	data, _ = json.Marshal(Record{App: "a", Board: "b", Member: "m", Op: OpRemove})
+	var back Record
+	_ = json.Unmarshal(data, &back)
+	if back.Op != OpRemove {
+		t.Fatalf("tombstone round-trip lost op: %s", data)
+	}
+}
+
+func TestIngestorRemove(t *testing.T) {
+	ctx := context.Background()
+	reg := NewStaticRegistry()
+	reg.Register(engine.LogicalBoard{App: "app", Board: "score"})
+	log := NewMemLog()
+	ing := NewIngestor(log, reg, NewMemDeduper())
+
+	if err := ing.Remove(ctx, Record{App: "app", Board: "nope", Member: "m"}); !errors.Is(err, ErrUnknownBoard) {
+		t.Fatalf("unknown board: %v", err)
+	}
+	if err := ing.Remove(ctx, Record{App: "app", Board: "score", Member: "cheater"}); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := log.ReadPartition(ctx, 0, "", 10)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("log: %v / %v", recs, err)
+	}
+	if recs[0].Op != OpRemove || recs[0].Member != "cheater" || recs[0].Time.IsZero() {
+		t.Fatalf("bad tombstone: %+v", recs[0])
 	}
 }
