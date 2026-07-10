@@ -190,6 +190,7 @@ func (s *Server) Handler() http.Handler {
 	dataPlane("POST /v1/boards", s.handleCreateBoard)
 	dataPlane("GET /v1/boards", s.handleListBoards)
 	dataPlane("POST /v1/boards/{board}/scores", s.handleSubmit)
+	dataPlane("DELETE /v1/boards/{board}/scores/{member}", s.handleRemoveScore)
 	dataPlane("GET /v1/boards/{board}/rank", s.handleRank)
 	dataPlane("GET /v1/boards/{board}/top", s.handleTop)
 	dataPlane("GET /v1/boards/{board}/page", s.handlePage)
@@ -201,6 +202,7 @@ func (s *Server) Handler() http.Handler {
 	dataPlane("GET /v1/users", s.handleLookupUser)
 	dataPlane("GET /v1/users/{id}", s.handleGetUser)
 	dataPlane("PATCH /v1/users/{id}", s.handleRenameUser)
+	dataPlane("DELETE /v1/users/{id}", s.handleDeleteUser)
 
 	// Serve the dashboard SPA from the same origin (catch-all, lowest priority).
 	if s.webDir != "" {
