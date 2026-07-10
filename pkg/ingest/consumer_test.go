@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -90,6 +91,103 @@ func TestConsumerAppliesAndFansOut(t *testing.T) {
 		if c, _ := eng.Count(ctx, b); c != 3 {
 			t.Errorf("%s board count = %d, want 3", name, c)
 		}
+	}
+}
+
+// TestConsumerAppliesTombstones: submit → remove → submit ordering within one
+// drain, across all fan-out windows.
+func TestConsumerAppliesTombstones(t *testing.T) {
+	ctx := context.Background()
+	rdb := testRedis(t)
+	eng := engine.NewRedisEngine(rdb)
+	app := ns(t)
+
+	reg := NewStaticRegistry()
+	lb := engine.LogicalBoard{App: app, Board: "score",
+		Windows: []engine.WindowSpec{{Kind: engine.WindowAllTime}, {Kind: engine.WindowDaily}}}
+	reg.Register(lb)
+	log := NewMemLog()
+	ing := NewIngestor(log, reg, NewMemDeduper())
+	now := time.Now().UTC()
+	t.Cleanup(func() { resetFanout(ctx, eng, app, now) })
+
+	submit := func(m string, sc float64) {
+		t.Helper()
+		if acc, err := ing.Submit(ctx, Record{App: app, Board: "score", Member: m, Score: sc, Time: now}); err != nil || !acc {
+			t.Fatalf("submit: %v/%v", acc, err)
+		}
+	}
+	submit("alice", 300)
+	submit("bob", 500)
+	if err := ing.Remove(ctx, Record{App: app, Board: "score", Member: "alice", Time: now}); err != nil {
+		t.Fatal(err)
+	}
+	submit("carol", 100) // after the tombstone; must survive
+
+	cons := NewConsumer(log, reg, eng)
+	if err := cons.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, win := range []string{"all", (engine.WindowSpec{Kind: engine.WindowDaily}).WindowID(now)} {
+		b := engine.Board{Key: engine.BoardKey{App: app, Board: "score", Segment: "all", Window: win}}
+		if _, err := eng.GetRank(ctx, b, "alice"); !errors.Is(err, engine.ErrMemberNotFound) {
+			t.Errorf("alice still on window %s: %v", win, err)
+		}
+		if c, _ := eng.Count(ctx, b); c != 2 {
+			t.Errorf("window %s count: got %d, want 2 (bob+carol)", win, c)
+		}
+	}
+
+	// A submit AFTER the removal re-adds the member (remove is not a ban).
+	submit("alice", 999)
+	if err := cons.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	b := engine.Board{Key: engine.BoardKey{App: app, Board: "score", Segment: "all", Window: "all"}}
+	if re, err := eng.GetRank(ctx, b, "alice"); err != nil || re.Rank != 1 {
+		t.Errorf("alice after re-submit: %+v / %v", re, err)
+	}
+}
+
+// TestRebuildReproducesRemoval is the core invariant: a rebuilt cache must
+// not resurrect removed entries.
+func TestRebuildReproducesRemoval(t *testing.T) {
+	ctx := context.Background()
+	rdb := testRedis(t)
+	eng := engine.NewRedisEngine(rdb)
+	app := ns(t)
+
+	reg := NewStaticRegistry()
+	lb := engine.LogicalBoard{App: app, Board: "score"}
+	reg.Register(lb)
+	log := NewMemLog()
+	ing := NewIngestor(log, reg, NewMemDeduper())
+	now := time.Now().UTC()
+	b := engine.Board{Key: engine.BoardKey{App: app, Board: "score", Segment: "all", Window: "all"}}
+	t.Cleanup(func() { _ = eng.Reset(ctx, b) })
+
+	_, _ = ing.Submit(ctx, Record{App: app, Board: "score", Member: "cheater", Score: 9999, Time: now})
+	_, _ = ing.Submit(ctx, Record{App: app, Board: "score", Member: "honest", Score: 100, Time: now})
+	if err := ing.Remove(ctx, Record{App: app, Board: "score", Member: "cheater", Time: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewConsumer(log, reg, eng).Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate cache loss, then rebuild from the log.
+	if err := eng.Reset(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if err := Rebuild(ctx, log, reg, eng); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.GetRank(ctx, b, "cheater"); !errors.Is(err, engine.ErrMemberNotFound) {
+		t.Errorf("rebuild resurrected the removed member: %v", err)
+	}
+	if re, err := eng.GetRank(ctx, b, "honest"); err != nil || re.Rank != 1 {
+		t.Errorf("honest member lost in rebuild: %+v / %v", re, err)
 	}
 }
 

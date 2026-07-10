@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"testing"
 	"time"
@@ -267,5 +268,43 @@ func TestGroupStaticOwnershipParallel(t *testing.T) {
 	}
 	if total != 30 {
 		t.Errorf("applied %d members, want 30 (no gaps, no double-processing)", total)
+	}
+}
+
+func TestGroupConsumerAppliesTombstones(t *testing.T) {
+	ctx := context.Background()
+	rdb := testRedis(t)
+	eng := engine.NewRedisEngine(rdb)
+	app := ns(t)
+
+	reg := NewStaticRegistry()
+	reg.Register(engine.LogicalBoard{App: app, Board: "score"})
+	rlog := NewRedisLog(rdb, "test:"+app, 1, 0)
+	t.Cleanup(func() { rdb.Del(ctx, rlog.StreamName(0)) })
+	ing := NewIngestor(rlog, reg, NewMemDeduper())
+	now := time.Now().UTC()
+	b := engine.Board{Key: engine.BoardKey{App: app, Board: "score", Segment: "all", Window: "all"}}
+	t.Cleanup(func() { _ = eng.Reset(ctx, b) })
+
+	_, _ = ing.Submit(ctx, Record{App: app, Board: "score", Member: "alice", Score: 300, Time: now})
+	if err := ing.Remove(ctx, Record{App: app, Board: "score", Member: "alice", Time: now}); err != nil {
+		t.Fatal(err)
+	}
+
+	gc := NewGroupConsumer(rlog, reg, eng, GroupOptions{Group: "g-" + app})
+	if err := gc.EnsureGroups(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		n, err := gc.Step(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if _, err := eng.GetRank(ctx, b, "alice"); !errors.Is(err, engine.ErrMemberNotFound) {
+		t.Errorf("tombstone not applied by group consumer: %v", err)
 	}
 }

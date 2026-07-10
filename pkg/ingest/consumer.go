@@ -46,18 +46,38 @@ func recordToOps(lb engine.LogicalBoard, rec Record) []engine.SubmitOp {
 	return ops
 }
 
-// recordsToOps resolves and fans out a batch of records, skipping any whose
-// board is no longer registered.
-func recordsToOps(resolver BoardResolver, recs []Record) []engine.SubmitOp {
+// applyRecords applies a mixed batch of submits and tombstones in log order:
+// consecutive submits are batched into one SubmitBatch; a removal flushes the
+// pending batch first (so earlier submits of the same member land before the
+// removal), then removes the member from every live physical board. Records
+// whose board is no longer registered are skipped.
+func applyRecords(ctx context.Context, eng engine.RankingEngine, resolver BoardResolver, recs []Record) error {
 	var ops []engine.SubmitOp
+	flush := func() error {
+		if len(ops) == 0 {
+			return nil
+		}
+		_, err := eng.SubmitBatch(ctx, ops)
+		ops = nil
+		return err
+	}
 	for _, rec := range recs {
 		lb, ok := resolver.Resolve(rec.App, rec.Board)
 		if !ok {
 			continue
 		}
+		if rec.Op == OpRemove {
+			if err := flush(); err != nil {
+				return err
+			}
+			if err := eng.RemoveFromAll(ctx, lb, rec.Member); err != nil {
+				return err
+			}
+			continue
+		}
 		ops = append(ops, recordToOps(lb, rec)...)
 	}
-	return ops
+	return flush()
 }
 
 // Step reads and applies up to one batch per partition. It returns the total
@@ -76,10 +96,8 @@ func (c *Consumer) Step(ctx context.Context) (int, error) {
 		if len(recs) == 0 {
 			continue
 		}
-		if ops := recordsToOps(c.resolver, recs); len(ops) > 0 {
-			if _, err := c.eng.SubmitBatch(ctx, ops); err != nil {
-				return total, err
-			}
+		if err := applyRecords(ctx, c.eng, c.resolver, recs); err != nil {
+			return total, err
 		}
 		c.mu.Lock()
 		c.cursors[p] = recs[len(recs)-1].ID

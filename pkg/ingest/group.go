@@ -123,8 +123,8 @@ func (g *GroupConsumer) apply(ctx context.Context, stream string, msgs []redis.X
 		return 0, err
 	}
 
-	// 2. Build fan-out ops for not-yet-applied, resolvable records.
-	var ops []engine.SubmitOp
+	// 2. Collect not-yet-applied, resolvable records (in stream order).
+	var recs []Record
 	var newIDs []string
 	allIDs := make([]string, len(msgs))
 	for i, m := range msgs {
@@ -139,17 +139,15 @@ func (g *GroupConsumer) apply(ctx context.Context, stream string, msgs []redis.X
 		if !ok {
 			continue // malformed: skip, will ACK
 		}
-		if lb, ok := g.resolver.Resolve(rec.App, rec.Board); ok {
-			ops = append(ops, recordToOps(lb, rec)...)
+		if _, ok := g.resolver.Resolve(rec.App, rec.Board); ok {
+			recs = append(recs, rec)
 			newIDs = append(newIDs, m.ID)
 		}
 	}
 
-	// 3. Apply, then 4. mark applied (order: apply-before-mark = at-least-once).
-	if len(ops) > 0 {
-		if _, err := g.eng.SubmitBatch(ctx, ops); err != nil {
-			return 0, err
-		}
+	// 3. Apply in order, then 4. mark applied (apply-before-mark = at-least-once).
+	if err := applyRecords(ctx, g.eng, g.resolver, recs); err != nil {
+		return 0, err
 	}
 	if len(newIDs) > 0 {
 		mp := g.rdb.Pipeline()
