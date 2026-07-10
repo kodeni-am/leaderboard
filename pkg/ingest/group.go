@@ -17,9 +17,10 @@ import (
 //
 // Delivery is at-least-once. Apply is made idempotent by marking each stream
 // entry id (SET NX) AFTER it is applied and skipping already-applied ids on
-// redelivery. This makes best/last exactly-once; the only residual is that an
-// `increment` board can double-count an entry if a worker crashes in the narrow
-// window between applying a batch and marking it (documented; rare).
+// redelivery. This makes best/last exactly-once; the residual is that an
+// `increment` board can double-count entries if a batch is partially applied
+// but not yet marked — a worker crash between apply and mark, or a mid-batch
+// error after applyRecords has flushed some submits (documented; rare).
 type GroupConsumer struct {
 	log          *RedisLog
 	rdb          redis.UniversalClient

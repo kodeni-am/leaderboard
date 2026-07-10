@@ -65,7 +65,9 @@ Decisions are grounded in researched, verified production practice (see
   entirely (all boards + registered nickname) — from the dashboard, the API
   (`DELETE /v1/boards/{board}/scores/{member}`, `DELETE /v1/users/{id}`), or
   any SDK. Removals are durable tombstones in the ingest log, so they survive
-  cache rebuilds.
+  cache rebuilds. Note: moderation accepts plain API-key auth even on apps
+  with `require_signing` — on those apps, treat the API key as a server-side
+  secret (signing protects submits, not deletes).
 - **Reference Go SDK.**
 
 ## Quickstart (local, Docker)

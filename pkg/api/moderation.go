@@ -12,6 +12,14 @@ import (
 // deletion. The immediate engine apply only provides read-your-writes; if it
 // fails after a successful append we answer removal_queued and the consumer
 // converges from the tombstone.
+//
+// Known residual: the synchronous apply can interleave with the consumer so
+// that a submit appended AFTER the tombstone is wiped from the cache (the
+// log and cache diverge until that member's next submit or a rebuild). The
+// dangerous direction cannot happen — a removed score is never permanently
+// resurrected, because any replayed submit that predates the tombstone is
+// re-removed when the consumer reaches it. Accepted: the affected score
+// belongs to the member being moderated.
 
 func (s *Server) handleRemoveScore(w http.ResponseWriter, r *http.Request) {
 	app, _ := tenancy.AppFromContext(r.Context())

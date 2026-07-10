@@ -27,7 +27,11 @@ window reaper. Deletions are therefore recorded as durable tombstone events.
   may re-register and submit again.
 - Auth: standard data plane (`requireApp`) — app API key, or dashboard
   session + `X-App-Id` + CSRF. API-key holders can already submit arbitrary
-  scores, so this grants no new trust.
+  scores, so this grants no new trust. Caveat (final review): on
+  `require_signing` apps the bare API key cannot submit but CAN delete, so
+  these endpoints extend what a leaked client-side key can do there; treat
+  such keys as server-side secrets. Restricting moderation to session auth on
+  signing-enabled apps is a candidate follow-up.
 - SDKs (Go, TypeScript, Unity) expose both operations.
 - Out of scope: ban lists, moderation audit log.
 
@@ -71,6 +75,12 @@ case as "removal queued — may take a moment".
 The consumer later applies the same tombstone again; removal is naturally
 idempotent (`ZREM` of an absent member is a no-op; the histogram decrement is
 guarded by the `ZSCORE` lookup, which finds nothing the second time).
+
+Known residual (final review): the synchronous apply can race the consumer
+such that a submit appended after the tombstone is wiped from the cache until
+that member's next submit or a rebuild. A removed score is never permanently
+resurrected (replayed pre-tombstone submits are re-removed in log order).
+Accepted: the affected score belongs to the member being moderated.
 
 ### Replay / rebuild
 
