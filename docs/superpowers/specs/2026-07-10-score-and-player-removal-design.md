@@ -37,16 +37,24 @@ window reaper. Deletions are therefore recorded as durable tombstone events.
 
 `ingest.Record` gains an `Op` field (JSON `op`, `omitempty`):
 
-| Op             | Meaning                                              | Fields used          |
-|----------------|------------------------------------------------------|----------------------|
-| "" / `submit`  | score submission (default; all existing log entries) | all (unchanged)      |
-| `remove`       | remove one member's entry from one logical board     | App, Board, Member   |
-| `deletePlayer` | remove member from all boards + users registry       | App, Member          |
+| Op            | Meaning                                              | Fields used        |
+|---------------|------------------------------------------------------|--------------------|
+| "" (`submit`) | score submission (default; all existing log entries) | all (unchanged)    |
+| `remove`      | remove one member's entry from one logical board     | App, Board, Member |
 
 - Absent/empty `op` decodes as a submit, so the log format is backward
   compatible; encode/decode stays plain JSON in the stream's `d` field.
-- Tombstones carry an idempotency key like submits, so redelivery is safe.
 - Score/Segments are unused on tombstones.
+- **There is no `deletePlayer` log op.** The log partitions by
+  (app, board, member): a per-board `remove` tombstone lands in the same
+  partition as that member's submits on that board, so replay order is
+  preserved. A single cross-board delete event would land in a different
+  partition and race its own submits. "Delete player" therefore decomposes at
+  the API layer into one `remove` tombstone per board plus a synchronous
+  registry deletion (see Player deletion below).
+- Redelivery is safe without a dedup key: removal is naturally idempotent,
+  and the GroupConsumer's applied-id markers already dedup redelivered
+  stream entries.
 
 ### Write path (API handler)
 
@@ -66,13 +74,13 @@ guarded by the `ZSCORE` lookup, which finds nothing the second time).
 
 ### Replay / rebuild
 
-`recordToOps`/`recordsToOps` and both consumers (`Consumer`,
-`GroupConsumer`) branch on `Op`:
+A shared `applyRecords` function (used by both `Consumer` and
+`GroupConsumer`) applies a mixed batch in log order:
 
-- Submits batch into `SubmitBatch` as today.
-- Tombstones call the shared removal apply function.
-- A batch is **split at op boundaries** so log order is preserved — a remove
-  that follows a submit of the same member is applied after it.
+- Consecutive submits batch into `SubmitBatch` as today.
+- A `remove` tombstone **flushes the pending submit batch first** (so earlier
+  submits of the same member land before the removal), then calls the engine
+  removal (below).
 
 Rebuild-from-log (`Rebuild` → `Consumer.Drain`) therefore reproduces every
 deletion at its position in history. A `remove` is not a ban: submits later
@@ -82,37 +90,47 @@ semantics.
 ### Engine fan-out
 
 `engine.Remove` operates on one *physical* board; a submit fans out to
-`windows × segments` physical boards. A new shared helper removes a member
-from **all physical keys currently live** for a logical board:
+`windows × segments` physical boards. The `RankingEngine` interface gains
 
-- Derive current-window physical boards the same way the submit path does
-  (`DerivePhysicalBoards`).
-- Additionally scan for other live window keys of that board (per segment,
-  `lb:{app:board:*}` pattern) so past windows that the reaper has not yet
-  aged out are cleaned too.
+```go
+RemoveFromAll(ctx context.Context, lb LogicalBoard, member string) error
+```
+
+which removes the member from **every physical board currently live** for the
+logical board — all segments and all windows, including past windows the
+reaper has not yet aged out. Implementation: SCAN for `lb:{app:board:*}:z`
+keys and parse the hash tag back into `BoardKey`s (components cannot contain
+`:`, so the parse is unambiguous — same trick as the reaper's
+`windowFromZKey`), then call `Remove` on each. Like the reaper's sweep, the
+SCAN inherits single-node scope on Redis Cluster (existing precedent).
 
 `RedisEngine.Remove` already maintains the sorted set and the approx-rank
-histogram correctly; `ShardedEngine.Remove` already routes to the member's
-shard. This helper runs in both the API handler (immediate apply) and the
-consumers (replay).
+histogram correctly. `ShardedEngine.RemoveFromAll` scans only the member's
+shard (`board#s<shardOf(member)>` suffix) since writes route by member.
+
+This method runs in both the API handler (immediate apply) and the consumers
+(replay).
 
 ### Player deletion
 
-For `deletePlayer`, the apply function:
+`DELETE /v1/users/{member}` in the API handler:
 
 1. Lists the app's boards from the tenancy store.
-2. Runs the per-board removal (above) for each.
-3. Calls a new `users.Delete(app, member)` that removes the registration and
-   frees the nickname, using the same locking pattern as `users.Rename` to
-   avoid racing a concurrent rename/register.
+2. Appends one `remove` tombstone per board (durable commit point), then
+   applies `RemoveFromAll` per board for read-your-writes.
+3. Calls a new `users.Delete(appID, member)` that removes the registration
+   and frees the nickname. No log event: the registry is primary data (it
+   never flows through the ingest log and is not rebuilt from it).
 
-Deleting an absent user is a no-op, keeping replay idempotent.
+Deleting an absent user is a no-op, keeping the endpoint idempotent and
+retryable after partial failure.
 
-**Re-register race:** if the player re-registers between tombstone append and
-consumer apply, the consumer must not delete the fresh registration. The
-consumer skips the registry deletion when the registration is **newer than
-the tombstone's timestamp**. Registrations carry a created-at timestamp (add
-one if not already present).
+**Re-register safety:** player ids are never reused (every registration
+mints a fresh `plr_` id), so a delete can never affect a later
+re-registration's record. The only shared resource is the nickname:
+`users.Delete` releases the lowercased nickname claim **only if it still
+maps to this id** (same atomic-Lua-with-retry pattern as `users.Rename`),
+so a delete racing a rename or a re-claimed nickname stays correct.
 
 ## API
 
@@ -161,12 +179,13 @@ TS SDK gets a minor version bump; README/docs snippets updated alongside.
 - **Engine:** fan-out removal clears every window/segment key including
   histogram buckets on approx boards; stale (pre-reaper) window keys cleaned.
 - **Ingest:** tombstone encode/decode round-trip; records without `op`
-  decode as submits; consumers apply `remove` and `deletePlayer`; batch
-  splitting preserves submit→remove ordering; redelivery is idempotent.
+  decode as submits; consumers apply `remove`; `applyRecords` preserves
+  submit→remove→submit ordering within a batch; redelivery is idempotent.
 - **Rebuild:** submit → remove → rebuild-from-log → member absent (the core
   invariant this design exists for).
-- **Re-register race:** a registration newer than the tombstone survives
-  consumer replay.
+- **Users:** `Delete` releases the nickname for re-claim, is a no-op on
+  unknown ids, and never releases a nickname that has been re-claimed by a
+  different player.
 - **API:** both auth paths (API key; session + CSRF); 404/204 semantics;
   log-append failure fails the request.
 - **Dashboard:** removed player disappears from top-N (page-enrichment-style
