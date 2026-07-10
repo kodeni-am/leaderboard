@@ -77,4 +77,29 @@ const enriched = await lb.getTop("high", 5);
 const mine = enriched.find((e) => e.member === u.user_id);
 assert(mine && mine.nickname === `${nick}-2`, `top carries nickname ${JSON.stringify(enriched)}`);
 
+// Moderation: remove one entry, then delete a player entirely.
+await lb.submitScore("high", "mallory", 9999);
+await new Promise((res) => setTimeout(res, 1500));
+await lb.removeScore("high", "mallory");
+let removed = false;
+try {
+  await lb.getRank("high", "mallory");
+} catch (e) {
+  removed = e instanceof NotFoundError;
+}
+assert(removed, "mallory removed from board");
+await lb.removeScore("high", "mallory"); // idempotent
+
+const victim = await lb.registerUser("ToDelete-" + Date.now());
+await lb.submitScore("high", victim.user_id, 123);
+await new Promise((res) => setTimeout(res, 1500));
+await lb.deleteUser(victim.user_id);
+let unregistered = false;
+try {
+  await lb.getUser(victim.user_id);
+} catch (e) {
+  unregistered = e instanceof NotFoundError;
+}
+assert(unregistered, "deleted player unregistered");
+
 console.log("TS SDK e2e: PASS ✅");

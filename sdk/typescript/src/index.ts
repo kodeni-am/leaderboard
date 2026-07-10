@@ -236,6 +236,25 @@ export class LeaderboardClient {
     return this.send("PATCH", `/v1/users/${enc(userId)}`, { nickname });
   }
 
+  /**
+   * Remove a member's entry from a board — every window and segment. The
+   * removal is durably logged and survives cache rebuilds. Removing an
+   * absent member is a no-op; the member may submit again afterwards.
+   * Throws {@link NotFoundError} for an unknown board.
+   */
+  async removeScore(board: string, member: string): Promise<void> {
+    await this.send("DELETE", `/v1/boards/${enc(board)}/scores/${enc(member)}`);
+  }
+
+  /**
+   * Delete a player entirely: their scores on every board in the app plus
+   * their registration — the nickname is released for re-use. Works for
+   * unregistered raw member ids too.
+   */
+  async deleteUser(userId: string): Promise<void> {
+    await this.send("DELETE", `/v1/users/${enc(userId)}`);
+  }
+
   private async send(method: string, path: string, body?: unknown): Promise<any> {
     const headers: Record<string, string> = { Authorization: `Bearer ${this.apiKey}` };
     let bodyStr: string | undefined;
