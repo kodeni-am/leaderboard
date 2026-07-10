@@ -23,6 +23,9 @@ var (
 	// ErrRenameContention is returned when a rename kept losing to concurrent
 	// renames of the same player and exhausted its retries.
 	ErrRenameContention = errors.New("users: rename contention, retry")
+	// ErrDeleteContention is returned when a delete kept losing to concurrent
+	// renames of the same player and exhausted its retries.
+	ErrDeleteContention = errors.New("users: delete contention, retry")
 )
 
 // User is a registered player within one app.
@@ -49,6 +52,12 @@ type Store interface {
 	// Nicknames returns id -> display nickname for the ids that are
 	// registered players; unregistered ids are simply absent from the map.
 	Nicknames(ctx context.Context, appID string, ids []string) (map[string]string, error)
+	// Delete removes a player's registration and releases the nickname for
+	// re-use. Unknown ids are a no-op (nil) so deletion is idempotent. The
+	// nickname claim is released only if it still maps to this id — player ids
+	// are never reused, so a replayed delete can never affect a later
+	// registration that re-claimed the name.
+	Delete(ctx context.Context, appID, id string) error
 }
 
 // normalizeNickname trims and validates nick, returning the display form and

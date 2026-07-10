@@ -105,3 +105,18 @@ func (m *MemStore) Nicknames(_ context.Context, appID string, ids []string) (map
 	}
 	return out, nil
 }
+
+func (m *MemStore) Delete(_ context.Context, appID, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[appID][id]
+	if !ok {
+		return nil
+	}
+	_, lower, err := normalizeNickname(u.Nickname)
+	if err == nil && m.nicks[appID][lower] == id {
+		delete(m.nicks[appID], lower)
+	}
+	delete(m.users[appID], id)
+	return nil
+}

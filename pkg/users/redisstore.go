@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -48,6 +49,21 @@ if ARGV[1] ~= ARGV[2] then
 end
 redis.call('HSET', KEYS[2], ARGV[3], ARGV[4])
 redis.call('SET', KEYS[3], ARGV[5])
+return 1
+`)
+
+// deleteScript removes the player record and id->display mapping, releasing
+// the lowercased nickname claim only if it still maps to this player.
+// Returns -1 when the caller's nickname snapshot is stale (a concurrent
+// rename moved it) so the caller re-reads and retries.
+// KEYS: 1=nick hash, 2=names hash, 3=user record
+// ARGV: 1=lower nick, 2=id
+var deleteScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[3]) == 0 then return 1 end
+if redis.call('HGET', KEYS[1], ARGV[1]) ~= ARGV[2] then return -1 end
+redis.call('HDEL', KEYS[1], ARGV[1])
+redis.call('HDEL', KEYS[2], ARGV[2])
+redis.call('DEL', KEYS[3])
 return 1
 `)
 
@@ -166,4 +182,34 @@ func (s *RedisStore) Nicknames(ctx context.Context, appID string, ids []string) 
 		}
 	}
 	return out, nil
+}
+
+func (s *RedisStore) Delete(ctx context.Context, appID, id string) error {
+	// Same stale-snapshot retry pattern as Rename: a concurrent rename of the
+	// same player invalidates our lowercased-nickname snapshot (-1).
+	const maxAttempts = 32
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		u, err := s.Get(ctx, appID, id)
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		_, lower, err := normalizeNickname(u.Nickname)
+		if err != nil {
+			return err
+		}
+		res, err := deleteScript.Run(ctx, s.rdb,
+			[]string{nickKey(appID), namesKey(appID), playerKey(appID, id)},
+			lower, id).Int()
+		if err != nil {
+			return err
+		}
+		if res == 1 {
+			return nil
+		}
+		// res == -1: stale snapshot, retry.
+	}
+	return ErrDeleteContention
 }

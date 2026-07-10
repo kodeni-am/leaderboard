@@ -160,6 +160,39 @@ func testStore(t *testing.T, s Store, app string) {
 	if _, err := s.GetByNickname(ctx, app, "Racer"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("original nickname not released: %v", err)
 	}
+
+	// Delete removes the registration and releases the nickname for re-claim.
+	del, err := s.Create(ctx, app, "Vanish")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Delete(ctx, app, del.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := s.Get(ctx, app, del.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Get after delete: %v, want ErrNotFound", err)
+	}
+	if n, err := s.Nicknames(ctx, app, []string{del.ID}); err != nil || len(n) != 0 {
+		t.Errorf("Nicknames after delete: %v / %v", n, err)
+	}
+	reclaimed, err := s.Create(ctx, app, "Vanish")
+	if err != nil {
+		t.Fatalf("nickname not released: %v", err)
+	}
+
+	// Deleting an unknown id is a no-op (idempotent).
+	if err := s.Delete(ctx, app, "plr_nope"); err != nil {
+		t.Errorf("Delete unknown: %v, want nil", err)
+	}
+
+	// Replayed delete of the OLD id must not touch the re-claimed nickname:
+	// the claim now maps to reclaimed.ID, not del.ID.
+	if err := s.Delete(ctx, app, del.ID); err != nil {
+		t.Errorf("replayed delete: %v", err)
+	}
+	if got, err := s.GetByNickname(ctx, app, "vanish"); err != nil || got.ID != reclaimed.ID {
+		t.Errorf("re-claimed nickname lost after replayed delete: %+v / %v", got, err)
+	}
 }
 
 func TestMemStore(t *testing.T) { testStore(t, NewMemStore(), "app_memtest") }
