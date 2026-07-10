@@ -182,3 +182,79 @@ func TestSDKUsers(t *testing.T) {
 		t.Fatalf("Top with nickname: %+v / %v", top, err)
 	}
 }
+
+func TestSDKModeration(t *testing.T) {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		addr = "localhost:6379"
+	}
+	rdb := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: []string{addr}})
+	ctx := context.Background()
+	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := rdb.Ping(pctx).Err(); err != nil {
+		t.Skipf("redis not available: %v", err)
+	}
+
+	eng := engine.NewRedisEngine(rdb)
+	store := tenancy.NewMemStore()
+	registry := ingest.NewStaticRegistry()
+	log := ingest.NewMemLog()
+	ing := ingest.NewIngestor(log, registry, ingest.NewMemDeduper())
+	cons := ingest.NewConsumer(log, registry, eng)
+	srv := api.NewServer(eng, ing, store, registry, nil, false, users.NewMemStore())
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	app, key, err := store.CreateApp(ctx, "usr_sdk_mod", "ModGame")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = eng.Reset(ctx, engine.Board{Key: engine.BoardKey{App: app.ID, Board: "high", Segment: "all", Window: "all"}})
+	})
+
+	c := New(ts.URL, key)
+	if err := c.CreateBoard(ctx, BoardDef{Board: "high"}); err != nil {
+		t.Fatal(err)
+	}
+
+	u, err := c.RegisterUser(ctx, "Ninja")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for m, sc := range map[string]float64{u.UserID: 900, "raw-alice": 500} {
+		if _, err := c.Submit(ctx, "high", Submission{Member: m, Score: sc}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cons.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// RemoveScore: entry gone, member can still be re-submitted.
+	if err := c.RemoveScore(ctx, "high", "raw-alice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetRank(ctx, "high", "raw-alice", QueryOpts{}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("raw-alice still ranked: %v", err)
+	}
+	// Idempotent.
+	if err := c.RemoveScore(ctx, "high", "raw-alice"); err != nil {
+		t.Fatalf("re-remove: %v", err)
+	}
+
+	// DeleteUser: scores gone, registration gone, nickname re-claimable.
+	if err := c.DeleteUser(ctx, u.UserID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.GetRank(ctx, "high", u.UserID, QueryOpts{}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted player still ranked: %v", err)
+	}
+	if _, err := c.GetUser(ctx, u.UserID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted player still registered: %v", err)
+	}
+	if _, err := c.RegisterUser(ctx, "Ninja"); err != nil {
+		t.Fatalf("nickname not released: %v", err)
+	}
+}

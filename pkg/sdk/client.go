@@ -247,3 +247,20 @@ func (c *Client) RenameUser(ctx context.Context, id, nickname string) (User, err
 	_, err := c.do(ctx, http.MethodPatch, "/v1/users/"+url.PathEscape(id), map[string]string{"nickname": nickname}, &u)
 	return u, err
 }
+
+// RemoveScore removes a member's entry from a board — every window and
+// segment. The removal is durably logged and survives cache rebuilds.
+// Removing an absent member is a no-op; the member may submit again
+// afterwards. Returns ErrNotFound for an unknown board.
+func (c *Client) RemoveScore(ctx context.Context, board, member string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/v1/boards/"+url.PathEscape(board)+"/scores/"+url.PathEscape(member), nil, nil)
+	return err
+}
+
+// DeleteUser deletes a player entirely: their scores on every board in the
+// app plus their registration — the nickname is released for re-use. Works
+// for unregistered raw member ids too (the registry step is then a no-op).
+func (c *Client) DeleteUser(ctx context.Context, id string) error {
+	_, err := c.do(ctx, http.MethodDelete, "/v1/users/"+url.PathEscape(id), nil, nil)
+	return err
+}
