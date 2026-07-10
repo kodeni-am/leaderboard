@@ -81,6 +81,12 @@ func (s *ShardedEngine) Remove(ctx context.Context, b Board, member string) erro
 	return s.re.Remove(ctx, s.shardBoard(b, s.shardOf(member)), member)
 }
 
+func (s *ShardedEngine) RemoveFromAll(ctx context.Context, lb LogicalBoard, member string) error {
+	sharded := lb
+	sharded.Board = lb.Board + "#s" + strconv.Itoa(s.shardOf(member))
+	return s.re.RemoveFromAll(ctx, sharded, member)
+}
+
 func (s *ShardedEngine) Reset(ctx context.Context, b Board) error {
 	for i := 0; i < s.shards; i++ {
 		if err := s.re.Reset(ctx, s.shardBoard(b, i)); err != nil {

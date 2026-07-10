@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -418,6 +419,52 @@ func (e *RedisEngine) Remove(ctx context.Context, b Board, member string) error 
 	}
 	primary := newScoreCodec(cfg).decode(stored)
 	return boardHistogram(e.rdb, b).Remove(ctx, primary)
+}
+
+// scanBoardKeys returns the BoardKey of every live sorted set belonging to
+// (app, board) — one per segment/window combination. Key components cannot
+// contain ':' (validated on write), so splitting the hash tag is unambiguous.
+// Like the window reaper's sweep, SCAN has single-node scope on Redis Cluster.
+func scanBoardKeys(ctx context.Context, rdb redis.UniversalClient, app, board string) ([]BoardKey, error) {
+	pattern := "lb:{" + app + ":" + board + ":*}:z"
+	var keys []BoardKey
+	var cursor uint64
+	for {
+		batch, next, err := rdb.Scan(ctx, cursor, pattern, 200).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, raw := range batch {
+			open := strings.IndexByte(raw, '{')
+			close := strings.IndexByte(raw, '}')
+			if open < 0 || close < open {
+				continue
+			}
+			parts := strings.Split(raw[open+1:close], ":")
+			if len(parts) != 4 {
+				continue
+			}
+			keys = append(keys, BoardKey{App: parts[0], Board: parts[1], Segment: parts[2], Window: parts[3]})
+		}
+		cursor = next
+		if cursor == 0 {
+			return keys, nil
+		}
+	}
+}
+
+// RemoveFromAll removes member from every live physical board of lb.
+func (e *RedisEngine) RemoveFromAll(ctx context.Context, lb LogicalBoard, member string) error {
+	keys, err := scanBoardKeys(ctx, e.rdb, lb.App, lb.Board)
+	if err != nil {
+		return err
+	}
+	for _, k := range keys {
+		if err := e.Remove(ctx, Board{Key: k, Config: lb.Config}, member); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Reset deletes the board entirely (used for window rollover).

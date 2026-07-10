@@ -68,5 +68,10 @@ type RankingEngine interface {
 	FriendRank(ctx context.Context, b Board, members []string) ([]RankEntry, error)
 	Count(ctx context.Context, b Board) (int64, error)
 	Remove(ctx context.Context, b Board, member string) error
+	// RemoveFromAll removes member from every live physical board of the
+	// logical board — all segments and all windows currently in the cache,
+	// including past windows the reaper has not yet expired. Approx-board
+	// histograms are maintained. Removing an absent member is a no-op.
+	RemoveFromAll(ctx context.Context, lb LogicalBoard, member string) error
 	Reset(ctx context.Context, b Board) error
 }

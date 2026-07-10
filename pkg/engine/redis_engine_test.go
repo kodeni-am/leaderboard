@@ -366,3 +366,78 @@ func equalSlice(a, b []string) bool {
 	}
 	return true
 }
+
+func TestRemoveFromAll(t *testing.T) {
+	e := testEngine(t)
+	ctx := context.Background()
+	app := strings.NewReplacer("/", "-", " ", "_").Replace(t.Name())
+	lb := LogicalBoard{App: app, Board: "b", Windows: []WindowSpec{{Kind: WindowAllTime}, {Kind: WindowDaily}}}
+	now := time.Now().UTC()
+
+	// Write alice+bob into every window/segment combo a submit would touch,
+	// on two segments, plus a PAST daily window (stale but still live in the
+	// cache — exactly what the reaper hasn't swept yet).
+	past := now.AddDate(0, 0, -3)
+	var boards []Board
+	for _, ev := range []Event{
+		{Member: "alice", Score: 100, Time: now, Segments: []string{"all", "region=eu"}},
+		{Member: "alice", Score: 90, Time: past, Segments: []string{"all"}},
+		{Member: "bob", Score: 50, Time: now, Segments: []string{"all", "region=eu"}},
+	} {
+		for _, k := range DerivePhysicalBoards(lb, ev) {
+			b := Board{Key: k, Config: lb.Config}
+			boards = append(boards, b)
+			if _, err := e.Submit(ctx, b, ev.Member, ev.Score, ev.Time); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	t.Cleanup(func() {
+		for _, b := range boards {
+			_ = e.Reset(ctx, b)
+		}
+	})
+
+	if err := e.RemoveFromAll(ctx, lb, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range boards {
+		if _, err := e.GetRank(ctx, b, "alice"); !errors.Is(err, ErrMemberNotFound) {
+			t.Errorf("alice still on %s: %v", b.Key, err)
+		}
+	}
+	// bob is untouched on the current-window boards.
+	cur := Board{Key: BoardKey{App: app, Board: "b", Segment: "all", Window: "all"}, Config: lb.Config}
+	if re, err := e.GetRank(ctx, cur, "bob"); err != nil || re.Rank != 1 {
+		t.Errorf("bob: %+v / %v", re, err)
+	}
+	// Removing an absent member is a no-op.
+	if err := e.RemoveFromAll(ctx, lb, "ghost"); err != nil {
+		t.Errorf("remove absent: %v", err)
+	}
+}
+
+func TestRemoveFromAllMaintainsHistogram(t *testing.T) {
+	e := testEngine(t)
+	ctx := context.Background()
+	cfg := BoardConfig{ApproxRank: true, ApproxMin: 0, ApproxMax: 1000, ApproxBuckets: 16}
+	b := freshBoard(t, e, cfg)
+	lb := LogicalBoard{App: b.Key.App, Board: b.Key.Board, Config: cfg}
+	now := time.Now().UTC()
+	for m, sc := range map[string]float64{"alice": 900, "bob": 500, "carol": 100} {
+		if _, err := e.Submit(ctx, b, m, sc, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := e.RemoveFromAll(ctx, lb, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	// With alice's bucket decremented, bob's approximate rank is 1 again.
+	re, err := e.GetApproxRank(ctx, b, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if re.Rank != 1 {
+		t.Errorf("approx rank after removal: got %d, want 1 (histogram not decremented?)", re.Rank)
+	}
+}
