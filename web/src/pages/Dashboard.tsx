@@ -501,6 +501,46 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
   const [seg, setSeg] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmState, setConfirmState] = useState<{
+    title: string;
+    body: string;
+    label: string;
+    onYes: () => Promise<void>;
+  } | null>(null);
+  const danger = { borderColor: "var(--danger)", color: "var(--danger)" };
+
+  // The server answers removal_queued when the removal is durably logged but
+  // the immediate apply failed — the consumer finishes it shortly.
+  function friendly(e: unknown): string {
+    const err = e as ApiError;
+    return err.message === "removal_queued" ? "Removal queued — it may take a moment to apply." : err.message;
+  }
+
+  function askRemoveEntry(entry: RankEntry) {
+    const who = entry.nickname ? `${entry.nickname} (${entry.member})` : entry.member;
+    setConfirmState({
+      title: "Remove entry?",
+      body: `Remove ${who} from ${board}? This removes their entry from every window and segment of this board. They can submit again afterwards.`,
+      label: "Remove entry",
+      onYes: async () => {
+        await api.removeScore(appId, board, entry.member);
+        await loadTop();
+      },
+    });
+  }
+
+  function askDeletePlayer(member: string, nickname?: string) {
+    const who = nickname ? `${nickname} (${member})` : member;
+    setConfirmState({
+      title: "Delete player?",
+      body: `Delete ${who} entirely? This removes their scores from ALL boards in this app and releases their nickname. This can't be undone.`,
+      label: "Delete player",
+      onYes: async () => {
+        await api.deleteUser(appId, member);
+        await loadTop();
+      },
+    });
+  }
 
   async function loadTop() {
     try {
@@ -572,7 +612,7 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
         }}
       />
 
-      <RankSearch appId={appId} board={board} window={win} segment={seg} />
+      <RankSearch appId={appId} board={board} window={win} segment={seg} onDeletePlayer={askDeletePlayer} />
 
       <div className="panel" style={{ padding: 0 }}>
         <div className="eyebrow" style={{ padding: "14px 18px", borderBottom: "1px solid var(--line)" }}>
@@ -582,7 +622,7 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
         {entries.length === 0 && !err && <div className="dim" style={{ padding: 18, fontSize: 14 }}>No entries in this window yet — submit a score above.</div>}
         {entries.length > 0 && (
           <table className="lb">
-            <thead><tr><th>Rank</th><th>Player</th><th style={{ textAlign: "right" }}>Score</th></tr></thead>
+            <thead><tr><th>Rank</th><th>Player</th><th style={{ textAlign: "right" }}>Score</th><th /></tr></thead>
             <tbody>
               {entries.map((e) => (
                 <tr key={e.member}>
@@ -593,12 +633,48 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
                       : <span className="mono">{e.member}</span>}
                   </td>
                   <td className="score">{e.score.toLocaleString()}</td>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={danger}
+                      title="Remove this entry from every window/segment of this board"
+                      onClick={() => askRemoveEntry(e)}
+                    >
+                      Remove
+                    </button>{" "}
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={danger}
+                      title="Delete this player: all scores on all boards, nickname released"
+                      onClick={() => askDeletePlayer(e.member, e.nickname)}
+                    >
+                      Delete player
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
+      {confirmState && (
+        <ConfirmDialog
+          title={confirmState.title}
+          body={confirmState.body}
+          confirmLabel={confirmState.label}
+          danger
+          onCancel={() => setConfirmState(null)}
+          onConfirm={async () => {
+            const fn = confirmState.onYes;
+            setConfirmState(null);
+            try {
+              await fn();
+            } catch (e) {
+              setErr(friendly(e));
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -656,7 +732,7 @@ function TestSubmit({ appId, board, segment, busy, onSubmit }: { appId: string; 
   );
 }
 
-function RankSearch({ appId, board, window, segment }: { appId: string; board: string; window: string; segment: string }) {
+function RankSearch({ appId, board, window, segment, onDeletePlayer }: { appId: string; board: string; window: string; segment: string; onDeletePlayer?: (member: string, nickname?: string) => void }) {
   const [member, setMember] = useState("");
   const [result, setResult] = useState<RankEntry | null>(null);
   const [msg, setMsg] = useState("");
@@ -681,7 +757,24 @@ function RankSearch({ appId, board, window, segment }: { appId: string; board: s
       <button className="btn btn-ghost" type="submit">Find rank</button>
       <div className="mono" style={{ minWidth: 150, textAlign: "right", fontSize: 14 }}>
         {result ? (
-          <span>{result.nickname ? `${result.nickname} · ` : ""}<span className="accent">#{result.rank}</span> · {result.score.toLocaleString()}</span>
+          <span>
+            {result.nickname ? `${result.nickname} · ` : ""}
+            <span className="accent">#{result.rank}</span> · {result.score.toLocaleString()}
+            {onDeletePlayer && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  style={{ borderColor: "var(--danger)", color: "var(--danger)" }}
+                  title="Delete this player: all scores on all boards, nickname released"
+                  onClick={() => onDeletePlayer(result.member, result.nickname)}
+                >
+                  Delete
+                </button>
+              </>
+            )}
+          </span>
         ) : (
           <span className="dim">{msg}</span>
         )}
