@@ -195,6 +195,7 @@ func (s *Server) Handler() http.Handler {
 	dataPlane("GET /v1/boards/{board}/top", s.handleTop)
 	dataPlane("GET /v1/boards/{board}/page", s.handlePage)
 	dataPlane("GET /v1/boards/{board}/neighbors", s.handleNeighbors)
+	dataPlane("GET /v1/boards/{board}/segments", s.handleSegments)
 	dataPlane("POST /v1/boards/{board}/friends", s.handleFriends)
 
 	// Player registry (optional; nicknames unique per app).
@@ -517,6 +518,28 @@ func (s *Server) handleNeighbors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeEntries(w, r, entries, err)
+}
+
+// handleSegments lists the segment names currently live for the board —
+// suggestions for the dashboard's segment filter and for API discovery.
+// Segments are ad-hoc (declared per submit, not on the board), so the list
+// reflects what the cache holds now, not an authoritative registry.
+func (s *Server) handleSegments(w http.ResponseWriter, r *http.Request) {
+	app, _ := tenancy.AppFromContext(r.Context())
+	lb, err := s.resolveBoard(r.Context(), app.ID, r.PathValue("board"))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "unknown board")
+		return
+	}
+	segs, err := s.eng.Segments(r.Context(), lb)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if segs == nil { // defensive: the field must marshal as [], never null
+		segs = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"segments": segs})
 }
 
 type friendsReq struct {
