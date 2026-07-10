@@ -1,7 +1,7 @@
 # Score & Player Removal — Design
 
 **Date:** 2026-07-10
-**Status:** Approved for implementation
+**Status:** Implemented
 
 ## Goal
 

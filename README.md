@@ -61,6 +61,11 @@ Decisions are grounded in researched, verified production practice (see
   replay window. Each app gets its own signing secret (derived from a server
   master key, never stored), so a public multi-tenant host can offer it
   per-tenant without sharing one global secret.
+- **Moderation:** remove a member's entry from a board, or delete a player
+  entirely (all boards + registered nickname) — from the dashboard, the API
+  (`DELETE /v1/boards/{board}/scores/{member}`, `DELETE /v1/users/{id}`), or
+  any SDK. Removals are durable tombstones in the ingest log, so they survive
+  cache rebuilds.
 - **Reference Go SDK.**
 
 ## Quickstart (local, Docker)
