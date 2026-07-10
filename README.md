@@ -67,7 +67,8 @@ Decisions are grounded in researched, verified production practice (see
   any SDK. Removals are durable tombstones in the ingest log, so they survive
   cache rebuilds. Note: moderation accepts plain API-key auth even on apps
   with `require_signing` — on those apps, treat the API key as a server-side
-  secret (signing protects submits, not deletes).
+  secret (signing protects submits, not deletes), and note that segment names
+  are enumerable by any key holder via `GET /v1/boards/{board}/segments`.
 - **Reference Go SDK.**
 
 ## Quickstart (local, Docker)
@@ -133,6 +134,7 @@ curl -s -X POST $BASE/v1/boards/high/scores -H "Authorization: Bearer $KEY" \
 | `GET /v1/boards/{board}/page?offset=&limit=` | Paginate |
 | `GET /v1/boards/{board}/neighbors?member=&k=` | Me ± k |
 | `POST /v1/boards/{board}/friends` | Rank an explicit member list |
+| `GET /v1/boards/{board}/segments` | List the segment names currently live on a board |
 | `POST /v1/users` | Register a player (server-minted id + nickname, unique per app) |
 | `GET /v1/users/{id}` · `GET /v1/users?nickname=` | Fetch / resolve a player |
 | `PATCH /v1/users/{id}` | Rename a player (id and board data unaffected) |
