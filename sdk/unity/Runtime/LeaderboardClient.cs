@@ -139,6 +139,27 @@ namespace OpenLeaderboard
             return UnityEngine.JsonUtility.FromJson<UserInfo>(resp);
         }
 
+        /// <summary>
+        /// Remove a member's entry from a board — every window and segment.
+        /// The removal is durably logged and survives cache rebuilds.
+        /// Removing an absent member is a no-op; the member may submit again
+        /// afterwards. Throws <see cref="NotFoundException"/> for an unknown board.
+        /// </summary>
+        public async Task RemoveScoreAsync(string board, string member)
+        {
+            await SendAsync("DELETE", "/v1/boards/" + Esc(board) + "/scores/" + Esc(member), null);
+        }
+
+        /// <summary>
+        /// Delete a player entirely: their scores on every board in the app
+        /// plus their registration — the nickname is released for re-use.
+        /// Works for unregistered raw member ids too.
+        /// </summary>
+        public async Task DeleteUserAsync(string userId)
+        {
+            await SendAsync("DELETE", "/v1/users/" + Esc(userId), null);
+        }
+
         /// <summary>Define a board. Typically a one-time dev/setup call.</summary>
         public async Task CreateBoardAsync(string board, string sortOrder = "desc", string updatePolicy = "best",
             string tieBreak = "lexical", params string[] windowKinds)
