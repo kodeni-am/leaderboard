@@ -482,6 +482,27 @@ func (e *RedisEngine) RemoveFromAll(ctx context.Context, lb LogicalBoard, member
 	return nil
 }
 
+// Segments returns the deduplicated, sorted segment names with live physical
+// boards for lb. Like RemoveFromAll, it lists what the scan can see: segments
+// whose only keys lived in dated windows disappear once the reaper expires
+// them (boards with an all-time window retain every segment ever used).
+func (e *RedisEngine) Segments(ctx context.Context, lb LogicalBoard) ([]string, error) {
+	keys, err := scanBoardKeys(ctx, e.rdb, lb.App, lb.Board)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(keys))
+	segs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if !seen[k.Segment] {
+			seen[k.Segment] = true
+			segs = append(segs, k.Segment)
+		}
+	}
+	sort.Strings(segs)
+	return segs, nil
+}
+
 // Reset deletes the board entirely (used for window rollover).
 func (e *RedisEngine) Reset(ctx context.Context, b Board) error {
 	if err := b.Key.validate(); err != nil {

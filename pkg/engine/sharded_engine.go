@@ -87,6 +87,29 @@ func (s *ShardedEngine) RemoveFromAll(ctx context.Context, lb LogicalBoard, memb
 	return s.re.RemoveFromAll(ctx, sharded, member)
 }
 
+// Segments unions the live segment names across all shards of lb (each shard
+// holds its own physical keys under the board#s<i> name).
+func (s *ShardedEngine) Segments(ctx context.Context, lb LogicalBoard) ([]string, error) {
+	seen := map[string]bool{}
+	segs := []string{}
+	for i := 0; i < s.shards; i++ {
+		sharded := lb
+		sharded.Board = lb.Board + "#s" + strconv.Itoa(i)
+		part, err := s.re.Segments(ctx, sharded)
+		if err != nil {
+			return nil, err
+		}
+		for _, sg := range part {
+			if !seen[sg] {
+				seen[sg] = true
+				segs = append(segs, sg)
+			}
+		}
+	}
+	sort.Strings(segs)
+	return segs, nil
+}
+
 func (s *ShardedEngine) Reset(ctx context.Context, b Board) error {
 	for i := 0; i < s.shards; i++ {
 		if err := s.re.Reset(ctx, s.shardBoard(b, i)); err != nil {

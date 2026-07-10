@@ -73,5 +73,9 @@ type RankingEngine interface {
 	// including past windows the reaper has not yet expired. Approx-board
 	// histograms are maintained. Removing an absent member is a no-op.
 	RemoveFromAll(ctx context.Context, lb LogicalBoard, member string) error
+	// Segments returns the deduplicated, lexically sorted segment names that
+	// currently have live physical boards for lb — including "all", where
+	// unsegmented submits land. An empty board yields an empty non-nil slice.
+	Segments(ctx context.Context, lb LogicalBoard) ([]string, error)
 	Reset(ctx context.Context, b Board) error
 }

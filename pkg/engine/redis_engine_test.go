@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/rand"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -468,5 +469,79 @@ func TestRemoveFromAllEscapesGlobMeta(t *testing.T) {
 	}
 	if re, err := e.GetRank(ctx, otherB, "alice"); err != nil || re.Rank != 1 {
 		t.Errorf("glob leak: alice removed from sibling board bZ: %+v / %v", re, err)
+	}
+}
+
+func TestSegments(t *testing.T) {
+	e := testEngine(t)
+	ctx := context.Background()
+	app := strings.NewReplacer("/", "-", " ", "_").Replace(t.Name())
+	lb := LogicalBoard{App: app, Board: "b", Windows: []WindowSpec{{Kind: WindowAllTime}, {Kind: WindowDaily}}}
+	now := time.Now().UTC()
+	past := now.AddDate(0, 0, -3)
+
+	// Empty board: no live keys yet -> empty, non-nil slice.
+	segs, err := e.Segments(ctx, lb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if segs == nil || len(segs) != 0 {
+		t.Fatalf("empty board: got %#v, want empty non-nil slice", segs)
+	}
+
+	var boards []Board
+	// Current-time submit into two segments (fans out to all-time + today's daily).
+	for _, k := range DerivePhysicalBoards(lb, Event{Member: "alice", Score: 100, Time: now, Segments: []string{"all", "region=eu"}}) {
+		b := Board{Key: k, Config: lb.Config}
+		boards = append(boards, b)
+		if _, err := e.Submit(ctx, b, "alice", 100, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A segment that exists ONLY in a stale past daily window (pre-reaper).
+	pastDaily := Board{Key: BoardKey{App: app, Board: "b", Segment: "s=old",
+		Window: (WindowSpec{Kind: WindowDaily}).WindowID(past)}, Config: lb.Config}
+	boards = append(boards, pastDaily)
+	if _, err := e.Submit(ctx, pastDaily, "carol", 10, past); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		for _, b := range boards {
+			_ = e.Reset(ctx, b)
+		}
+	})
+
+	segs, err = e.Segments(ctx, lb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"all", "region=eu", "s=old"}; !reflect.DeepEqual(segs, want) {
+		t.Fatalf("got %v, want %v (deduped across windows, sorted, stale window included)", segs, want)
+	}
+}
+
+func TestSegmentsEscapesGlobMeta(t *testing.T) {
+	e := testEngine(t)
+	ctx := context.Background()
+	app := strings.NewReplacer("/", "-", " ", "_").Replace(t.Name())
+	starB := Board{Key: BoardKey{App: app, Board: "b*", Segment: "star-seg", Window: "all"}}
+	otherB := Board{Key: BoardKey{App: app, Board: "bZ", Segment: "other-seg", Window: "all"}}
+	now := time.Now().UTC()
+	for _, b := range []Board{starB, otherB} {
+		if _, err := e.Submit(ctx, b, "alice", 1, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = e.Reset(ctx, starB)
+		_ = e.Reset(ctx, otherB)
+	})
+
+	segs, err := e.Segments(ctx, LogicalBoard{App: app, Board: "b*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(segs, []string{"star-seg"}) {
+		t.Fatalf("glob leak: board b* listed %v", segs)
 	}
 }
