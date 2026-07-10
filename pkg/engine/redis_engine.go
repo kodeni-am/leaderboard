@@ -421,12 +421,27 @@ func (e *RedisEngine) Remove(ctx context.Context, b Board, member string) error 
 	return boardHistogram(e.rdb, b).Remove(ctx, primary)
 }
 
+// globEscape escapes Redis glob metacharacters so s matches literally when
+// embedded in a SCAN MATCH pattern (board names may contain *?[] etc. —
+// key validation only rejects ':', braces, and whitespace).
+func globEscape(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '*', '?', '[', ']', '^', '\\':
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // scanBoardKeys returns the BoardKey of every live sorted set belonging to
 // (app, board) — one per segment/window combination. Key components cannot
 // contain ':' (validated on write), so splitting the hash tag is unambiguous.
 // Like the window reaper's sweep, SCAN has single-node scope on Redis Cluster.
 func scanBoardKeys(ctx context.Context, rdb redis.UniversalClient, app, board string) ([]BoardKey, error) {
-	pattern := "lb:{" + app + ":" + board + ":*}:z"
+	pattern := "lb:{" + globEscape(app) + ":" + globEscape(board) + ":*}:z"
 	var keys []BoardKey
 	var cursor uint64
 	for {

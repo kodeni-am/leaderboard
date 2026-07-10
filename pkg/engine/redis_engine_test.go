@@ -441,3 +441,32 @@ func TestRemoveFromAllMaintainsHistogram(t *testing.T) {
 		t.Errorf("approx rank after removal: got %d, want 1 (histogram not decremented?)", re.Rank)
 	}
 }
+
+func TestRemoveFromAllEscapesGlobMeta(t *testing.T) {
+	e := testEngine(t)
+	ctx := context.Background()
+	app := strings.NewReplacer("/", "-", " ", "_").Replace(t.Name())
+	starLB := LogicalBoard{App: app, Board: "b*"}
+	starB := Board{Key: BoardKey{App: app, Board: "b*", Segment: "all", Window: "all"}}
+	otherB := Board{Key: BoardKey{App: app, Board: "bZ", Segment: "all", Window: "all"}}
+	now := time.Now().UTC()
+	for _, b := range []Board{starB, otherB} {
+		if _, err := e.Submit(ctx, b, "alice", 100, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = e.Reset(ctx, starB)
+		_ = e.Reset(ctx, otherB)
+	})
+
+	if err := e.RemoveFromAll(ctx, starLB, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.GetRank(ctx, starB, "alice"); !errors.Is(err, ErrMemberNotFound) {
+		t.Errorf("alice not removed from the literal board: %v", err)
+	}
+	if re, err := e.GetRank(ctx, otherB, "alice"); err != nil || re.Rank != 1 {
+		t.Errorf("glob leak: alice removed from sibling board bZ: %+v / %v", re, err)
+	}
+}
