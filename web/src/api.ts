@@ -129,6 +129,8 @@ export const api = {
     req<RankEntry>("GET", `/v1/boards/${encodeURIComponent(board)}/rank?member=${encodeURIComponent(member)}${qs(q)}`, undefined, appHdr(appId)),
   neighbors: (appId: string, board: string, member: string, k: number, q?: QueryOpts) =>
     req<Entries>("GET", `/v1/boards/${encodeURIComponent(board)}/neighbors?member=${encodeURIComponent(member)}&k=${k}${qs(q)}`, undefined, appHdr(appId)),
+  segments: (appId: string, board: string) =>
+    req<{ segments: string[] }>("GET", `/v1/boards/${encodeURIComponent(board)}/segments`, undefined, appHdr(appId)),
   removeScore: (appId: string, board: string, member: string) =>
     req<unknown>("DELETE", `/v1/boards/${encodeURIComponent(board)}/scores/${encodeURIComponent(member)}`, undefined, appHdr(appId)),
   deleteUser: (appId: string, member: string) =>

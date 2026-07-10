@@ -499,6 +499,9 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
   // board, so they can't be enumerated — it's a free-text filter (blank = all),
   // applied on Refresh/Enter rather than per keystroke.
   const [seg, setSeg] = useState("");
+  // Live segment names for the datalist — suggestions only (segments are
+  // ad-hoc per submit; blank still means "all segments", free typing works).
+  const [segOpts, setSegOpts] = useState<string[]>([]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirmState, setConfirmState] = useState<{
@@ -554,6 +557,7 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
 
   useEffect(() => {
     void loadTop();
+    api.segments(appId, board).then((r) => setSegOpts(r.segments)).catch(() => setSegOpts([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId, board]);
 
@@ -577,6 +581,7 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
             {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </datalist>
           <input
+            list={`seg-${board}`}
             value={seg}
             onChange={(e) => setSeg(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") void loadTop(); }}
@@ -584,6 +589,9 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
             title="Segment filter, e.g. region=eu (blank = all)"
             style={{ width: 130 }}
           />
+          <datalist id={`seg-${board}`}>
+            {segOpts.map((s) => <option key={s} value={s} />)}
+          </datalist>
           <button className="btn btn-ghost btn-sm" onClick={() => void loadTop()}>Refresh</button>
         </div>
       </div>
