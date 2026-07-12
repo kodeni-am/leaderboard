@@ -66,6 +66,12 @@ plr:{<app>}:nick        HASH lower(nick) -> id       (uniqueness claim)
 Error responses follow the existing API error shape with stable error codes
 (`nickname_taken`, `invalid_nickname`, `user_not_found`).
 
+> **2026-07-12 extension:** `POST /v1/users` also accepts an optional
+> `member` field that claims an existing anonymous board member id in place
+> (`user_id` echoes it; the nickname attaches to all existing rows). See
+> [2026-07-12-claim-member-id-design.md](2026-07-12-claim-member-id-design.md),
+> including the trust caveat: any API-key holder can claim any raw member id.
+
 ## Read enrichment
 - `engine.RankEntry` gains `Nickname string \`json:"nickname,omitempty"\``.
   The engine never populates it (stays tenancy-agnostic).

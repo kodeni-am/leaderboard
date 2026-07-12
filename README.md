@@ -116,6 +116,11 @@ curl -s -X POST $BASE/v1/users -H "Authorization: Bearer $KEY" \
   -d '{"nickname":"Ninja"}'                    # -> {"user_id":"plr_...","nickname":"Ninja",...}
 curl -s -X POST $BASE/v1/boards/high/scores -H "Authorization: Bearer $KEY" \
   -d '{"member":"plr_...","score":1500}'
+
+# Or claim an existing anonymous member id in place ("bob" above): the
+# nickname attaches to all of bob's existing rows — no resubmit, no delete.
+curl -s -X POST $BASE/v1/users -H "Authorization: Bearer $KEY" \
+  -d '{"nickname":"Bobby","member":"bob"}'     # -> {"user_id":"bob","nickname":"Bobby",...}
 ```
 
 ## API
@@ -135,7 +140,7 @@ curl -s -X POST $BASE/v1/boards/high/scores -H "Authorization: Bearer $KEY" \
 | `GET /v1/boards/{board}/neighbors?member=&k=` | Me ± k |
 | `POST /v1/boards/{board}/friends` | Rank an explicit member list |
 | `GET /v1/boards/{board}/segments` | List the segment names currently live on a board |
-| `POST /v1/users` | Register a player (server-minted id + nickname, unique per app) |
+| `POST /v1/users` | Register a player (server-minted id + nickname, unique per app); `member` claims an existing member id in place |
 | `GET /v1/users/{id}` · `GET /v1/users?nickname=` | Fetch / resolve a player |
 | `PATCH /v1/users/{id}` | Rename a player (id and board data unaffected) |
 
@@ -146,6 +151,17 @@ Read entries include a `nickname` field for members registered via
 `/v1/users`; raw (unregistered) member strings keep working and simply omit
 it. Nicknames are unique per app, case-insensitively; renames are O(1) and
 never touch board data.
+
+Registration can also **claim an existing anonymous member id** (`{"nickname":
+..., "member": ...}`): the id is registered as-is, so the nickname attaches to
+all of that member's existing board rows — the one-call upgrade path for games
+that submit under per-install anonymous ids. Claimed ids can't use the
+reserved server-minted `plr_` prefix; conflicts return distinct codes
+(`member_taken` vs `nickname_taken`). Trust caveat: the API key is the only
+data-plane credential, so any client holding it can claim a nickname for any
+raw member id — the same trust level as unsigned score submits. If that
+matters for your app, enable HMAC signing and proxy registration through your
+backend.
 
 **Two auth planes** on the data plane (`/v1/boards/*` and `/v1/users*`): game clients use `Authorization: Bearer
 <api-key>` (or `X-API-Key`); the dashboard uses its session cookie plus an
