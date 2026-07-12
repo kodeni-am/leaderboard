@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,10 @@ var ErrNotFound = errors.New("sdk: not found")
 
 // ErrNicknameTaken is returned when a nickname is already claimed in the app.
 var ErrNicknameTaken = errors.New("sdk: nickname already taken")
+
+// ErrMemberTaken is returned when the member id being claimed is already a
+// registered player.
+var ErrMemberTaken = errors.New("sdk: member id already registered")
 
 // Entry mirrors a ranking entry returned by the API.
 type Entry struct {
@@ -106,6 +111,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		return resp.StatusCode, ErrNotFound
 	}
 	if resp.StatusCode == http.StatusConflict {
+		if strings.Contains(string(data), "member_taken") {
+			return resp.StatusCode, ErrMemberTaken
+		}
 		return resp.StatusCode, ErrNicknameTaken
 	}
 	if resp.StatusCode >= 400 {
@@ -217,11 +225,27 @@ type User struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// RegisterUser mints a player and claims nickname. Returns ErrNicknameTaken
-// if the name is already claimed in this app.
-func (c *Client) RegisterUser(ctx context.Context, nickname string) (User, error) {
+// RegisterUserOpts customizes RegisterUser.
+type RegisterUserOpts struct {
+	// Member claims an existing (anonymous) board member id instead of
+	// minting a plr_ one: the returned UserID echoes it and the nickname
+	// attaches to that member's existing rows in place — no resubmit needed.
+	// Anyone holding the API key can claim any raw member id, the same trust
+	// level as unsigned score submits.
+	Member string
+}
+
+// RegisterUser registers a player and claims nickname. By default it mints a
+// plr_ id; pass RegisterUserOpts{Member: ...} to claim an existing member id
+// in place. Returns ErrNicknameTaken if the name is already claimed in this
+// app, or ErrMemberTaken if the member id is already registered.
+func (c *Client) RegisterUser(ctx context.Context, nickname string, opts ...RegisterUserOpts) (User, error) {
+	body := map[string]string{"nickname": nickname}
+	if len(opts) > 0 && opts[0].Member != "" {
+		body["member"] = opts[0].Member
+	}
 	var u User
-	_, err := c.do(ctx, http.MethodPost, "/v1/users", map[string]string{"nickname": nickname}, &u)
+	_, err := c.do(ctx, http.MethodPost, "/v1/users", body, &u)
 	return u, err
 }
 

@@ -35,6 +35,26 @@ await lb.getTop("high", 10, { segment: "region=eu", window: "daily" });
 
 Errors: `NotFoundError` (404) and `LeaderboardError` (other non-2xx, with `.status`).
 
+### Player registry (nicknames)
+
+```ts
+// Mint a player id and claim a nickname (unique per app, case-insensitive).
+const u = await lb.registerUser("Ninja");            // throws NicknameTakenError on conflict
+await lb.submitScore("high", u.user_id, 1500);       // reads now include nickname
+
+// Or claim an EXISTING anonymous member id in place: user_id echoes it and
+// the nickname attaches to all its existing board rows — no resubmit, no
+// delete. Throws MemberTakenError if that id is already registered.
+await lb.registerUser("Ninja", { member: anonymousId });
+
+await lb.renameUser(u.user_id, "Shadow");            // id and board data unaffected
+```
+
+Trust caveat for claims: the API key is the only data-plane credential, so any
+client holding it can claim a nickname for any raw member id — the same trust
+level as unsigned score submits. Treat claims as untrusted input unless you
+sign submissions and proxy registration through your backend.
+
 ### One-time board setup
 
 ```ts
@@ -68,6 +88,7 @@ const lb = new LeaderboardClient(url, key, { appId, signingSecret }); // backend
 ```bash
 npm run typecheck
 npm run build
+npm run test:unit        # offline request/error-shape checks (mock fetch)
 npm run test:hmac        # offline HMAC cross-check
 npm run test:e2e         # against a running server (LB_API_KEY env)
 ```

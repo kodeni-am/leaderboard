@@ -181,6 +181,29 @@ func TestSDKUsers(t *testing.T) {
 	if err != nil || len(top) != 1 || top[0].Nickname != "Shadow" {
 		t.Fatalf("Top with nickname: %+v / %v", top, err)
 	}
+
+	// Claim an existing anonymous member id in place: submit raw first, then
+	// register with Member set — the nickname attaches to the existing row.
+	if _, err := c.Submit(ctx, "high", Submission{Member: "surfer-raw", Score: 300}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cons.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	cu, err := c.RegisterUser(ctx, "Kai", RegisterUserOpts{Member: "surfer-raw"})
+	if err != nil || cu.UserID != "surfer-raw" || cu.Nickname != "Kai" {
+		t.Fatalf("claim: %+v / %v", cu, err)
+	}
+	if _, err := c.RegisterUser(ctx, "Other", RegisterUserOpts{Member: "surfer-raw"}); !errors.Is(err, ErrMemberTaken) {
+		t.Errorf("re-claim: got %v, want ErrMemberTaken", err)
+	}
+	top, err = c.Top(ctx, "high", 10, QueryOpts{})
+	if err != nil || len(top) != 2 {
+		t.Fatalf("Top after claim: %+v / %v", top, err)
+	}
+	if top[1].Member != "surfer-raw" || top[1].Nickname != "Kai" || top[1].Score != 300 {
+		t.Fatalf("claimed row not enriched in place: %+v", top[1])
+	}
 }
 
 func TestSDKModeration(t *testing.T) {

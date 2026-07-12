@@ -1,7 +1,7 @@
 // End-to-end test of the TS SDK against a running leaderboardd.
 // Requires the server up (e.g. `docker compose up -d leaderboardd`) and an
 // app API key in LB_API_KEY. Run after `npm run build`.
-import { LeaderboardClient, NotFoundError, NicknameTakenError } from "../dist/index.js";
+import { LeaderboardClient, NotFoundError, NicknameTakenError, MemberTakenError } from "../dist/index.js";
 
 const BASE = process.env.BASE ?? "http://localhost:8080";
 // App creation requires a logged-in account; create an app in the dashboard
@@ -76,6 +76,24 @@ await new Promise((res) => setTimeout(res, 1500));
 const enriched = await lb.getTop("high", 5);
 const mine = enriched.find((e) => e.member === u.user_id);
 assert(mine && mine.nickname === `${nick}-2`, `top carries nickname ${JSON.stringify(enriched)}`);
+
+// Claim an existing anonymous member id in place: the nickname attaches to
+// the row already on the board — no resubmit, no delete.
+const anonId = `surfer-${Date.now()}`;
+await lb.submitScore("high", anonId, 777);
+await new Promise((res) => setTimeout(res, 1500));
+const claimNick = `Claimed-${Date.now()}`;
+const claimed = await lb.registerUser(claimNick, { member: anonId });
+assert(claimed.user_id === anonId, `claim echoes member: ${JSON.stringify(claimed)}`);
+const afterClaim = await lb.getRank("high", anonId);
+assert(afterClaim.score === 777 && afterClaim.nickname === claimNick, `claimed row keeps score + gains nickname ${JSON.stringify(afterClaim)}`);
+let memberConflict = false;
+try {
+  await lb.registerUser(`Other-${Date.now()}`, { member: anonId });
+} catch (e) {
+  memberConflict = e instanceof MemberTakenError;
+}
+assert(memberConflict, "re-claiming a member throws MemberTakenError");
 
 // Moderation: remove one entry, then delete a player entirely.
 await lb.submitScore("high", "mallory", 9999);

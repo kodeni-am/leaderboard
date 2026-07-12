@@ -20,7 +20,10 @@ export interface RankEntry {
   nickname?: string; // present when the member is a registered player
 }
 
-/** A registered player: server-minted id + nickname unique per app (case-insensitive). */
+/**
+ * A registered player: an id (server-minted `plr_...`, or a claimed existing
+ * member id) + nickname unique per app (case-insensitive).
+ */
 export interface User {
   user_id: string;
   nickname: string;
@@ -108,6 +111,14 @@ export class NicknameTakenError extends LeaderboardError {
   constructor(message: string) {
     super(409, message);
     this.name = "NicknameTakenError";
+  }
+}
+
+/** Thrown when the member id being claimed is already a registered player (HTTP 409). */
+export class MemberTakenError extends LeaderboardError {
+  constructor(message: string) {
+    super(409, message);
+    this.name = "MemberTakenError";
   }
 }
 
@@ -212,9 +223,16 @@ export class LeaderboardClient {
    * (unique per app, case-insensitive). Submit scores with `user_id` as the
    * member; reads then include the nickname. Throws {@link NicknameTakenError}
    * if the name is claimed.
+   *
+   * Pass `opts.member` to claim an EXISTING anonymous board member id in
+   * place instead of minting one: `user_id` echoes it and the nickname
+   * attaches to that member's existing rows — no resubmit, no delete. Throws
+   * {@link MemberTakenError} if that id is already registered. Trust caveat:
+   * anyone holding the API key can claim any raw member id — the same trust
+   * level as unsigned score submits.
    */
-  async registerUser(nickname: string): Promise<User> {
-    return this.send("POST", "/v1/users", { nickname });
+  async registerUser(nickname: string, opts: { member?: string } = {}): Promise<User> {
+    return this.send("POST", "/v1/users", { nickname, member: opts.member });
   }
 
   /** Fetch a registered player by id. Throws {@link NotFoundError} if absent. */
@@ -265,7 +283,11 @@ export class LeaderboardClient {
     const resp = await this.fetchFn(this.baseUrl + path, { method, headers, body: bodyStr });
     const text = await resp.text();
     if (resp.status === 404) throw new NotFoundError(text);
-    if (resp.status === 409) throw new NicknameTakenError(text);
+    if (resp.status === 409) {
+      // The server distinguishes the two conflict causes with stable codes.
+      if (text.includes("member_taken")) throw new MemberTakenError(text);
+      throw new NicknameTakenError(text);
+    }
     if (!resp.ok) throw new LeaderboardError(resp.status, `${method} ${path} -> ${resp.status}: ${text}`);
     return text ? JSON.parse(text) : {};
   }
