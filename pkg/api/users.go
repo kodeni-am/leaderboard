@@ -15,6 +15,10 @@ import (
 
 type userReq struct {
 	Nickname string `json:"nickname"`
+	// Member, when set on registration, claims that existing (anonymous)
+	// board member id instead of minting a plr_ one — the nickname attaches
+	// to the member's existing rows in place. Ignored on rename.
+	Member string `json:"member,omitempty"`
 }
 
 // writeUserErr maps users store errors onto stable API error codes.
@@ -24,6 +28,10 @@ func writeUserErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusBadRequest, "invalid_nickname")
 	case errors.Is(err, users.ErrNicknameTaken):
 		writeErr(w, http.StatusConflict, "nickname_taken")
+	case errors.Is(err, users.ErrInvalidMember):
+		writeErr(w, http.StatusBadRequest, "invalid_member")
+	case errors.Is(err, users.ErrMemberTaken):
+		writeErr(w, http.StatusConflict, "member_taken")
 	case errors.Is(err, users.ErrNotFound):
 		writeErr(w, http.StatusNotFound, "user_not_found")
 	case errors.Is(err, users.ErrRenameContention):
@@ -33,6 +41,16 @@ func writeUserErr(w http.ResponseWriter, err error) {
 	}
 }
 
+// handleCreateUser registers a player. With req.Member set it claims that
+// existing member id in place (user_id echoes it) instead of minting one.
+//
+// Trust model: the data plane is API-key authenticated, so ANY client holding
+// the key can claim a nickname for ANY raw member id — impersonation of
+// anonymous rows is possible by design. This is the same trust level as
+// unsigned score submits. TODO(trust): when an app opts into RequireSigning
+// (HMAC submit enforcement in handleSubmit, pkg/api/server.go), claims for an
+// explicit member must join it — require a valid signature proving control of
+// that member id.
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	app, _ := tenancy.AppFromContext(r.Context())
 	var req userReq
@@ -40,7 +58,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "nickname required")
 		return
 	}
-	u, err := s.users.Create(r.Context(), app.ID, req.Nickname)
+	u, err := s.users.Create(r.Context(), app.ID, req.Nickname, req.Member)
 	if err != nil {
 		writeUserErr(w, err)
 		return

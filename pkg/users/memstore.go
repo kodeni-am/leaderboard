@@ -20,17 +20,24 @@ func NewMemStore() *MemStore {
 	}
 }
 
-func (m *MemStore) Create(_ context.Context, appID, nickname string) (User, error) {
+func (m *MemStore) Create(_ context.Context, appID, nickname, member string) (User, error) {
 	display, lower, err := normalizeNickname(nickname)
 	if err != nil {
 		return User{}, err
 	}
-	id, err := newID()
-	if err != nil {
+	var id string
+	if member == "" {
+		if id, err = newID(); err != nil {
+			return User{}, err
+		}
+	} else if id, err = normalizeMemberID(member); err != nil {
 		return User{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if _, exists := m.users[appID][id]; exists {
+		return User{}, ErrMemberTaken
+	}
 	if _, taken := m.nicks[appID][lower]; taken {
 		return User{}, ErrNicknameTaken
 	}

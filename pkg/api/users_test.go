@@ -81,6 +81,78 @@ func TestUserEndpoints(t *testing.T) {
 	// "unauthenticated" request here wouldn't actually be unauthenticated.)
 }
 
+// TestClaimMemberID covers turning an anonymous board member into a
+// registered player in place: register with an explicit member id, keep all
+// existing rows, and get distinct conflict codes for the two 409 causes.
+func TestClaimMemberID(t *testing.T) {
+	h := newHarness(t)
+	h.onboard(t, "claim@example.com")
+	t.Cleanup(func() {
+		_ = h.eng.Reset(context.Background(), engine.Board{Key: engine.BoardKey{App: h.appID, Board: "waves", Segment: "all", Window: "all"}})
+	})
+
+	if resp, body := h.call(t, http.MethodPost, "/v1/boards", h.key(), map[string]any{"board": "waves"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create board: %d %s", resp.StatusCode, body)
+	}
+
+	// An anonymous install submits under a raw per-install member id.
+	if resp, body := h.call(t, http.MethodPost, "/v1/boards/waves/scores", h.key(), map[string]any{"member": "surfer-a1b2c3", "score": 420}); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("submit: %d %s", resp.StatusCode, body)
+	}
+	if err := h.cons.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// The player claims a nickname for that member id; the response echoes
+	// the claimed id as user_id.
+	resp, body := h.call(t, http.MethodPost, "/v1/users", h.key(), map[string]string{"nickname": "Kai", "member": "surfer-a1b2c3"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("claim: %d %s", resp.StatusCode, body)
+	}
+	var u struct {
+		UserID   string `json:"user_id"`
+		Nickname string `json:"nickname"`
+	}
+	json.Unmarshal(body, &u)
+	if u.UserID != "surfer-a1b2c3" || u.Nickname != "Kai" {
+		t.Fatalf("claim body: %s", body)
+	}
+
+	// The nickname attaches to the EXISTING board row — no resubmit, no
+	// delete (enrichEntries keys the names hash by raw member id).
+	resp, body = h.call(t, http.MethodGet, "/v1/boards/waves/top?n=10", h.key(), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("top: %d %s", resp.StatusCode, body)
+	}
+	var top struct {
+		Entries []struct {
+			Member   string  `json:"member"`
+			Score    float64 `json:"score"`
+			Nickname string  `json:"nickname"`
+		} `json:"entries"`
+	}
+	json.Unmarshal(body, &top)
+	if len(top.Entries) != 1 || top.Entries[0].Member != "surfer-a1b2c3" || top.Entries[0].Nickname != "Kai" || top.Entries[0].Score != 420 {
+		t.Fatalf("claimed row not enriched: %s", body)
+	}
+
+	// The two 409 causes carry distinct codes.
+	resp, body = h.call(t, http.MethodPost, "/v1/users", h.key(), map[string]string{"nickname": "Other", "member": "surfer-a1b2c3"})
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(body), "member_taken") {
+		t.Fatalf("re-claim: %d %s", resp.StatusCode, body)
+	}
+	resp, body = h.call(t, http.MethodPost, "/v1/users", h.key(), map[string]string{"nickname": "kai", "member": "surfer-other"})
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(body), "nickname_taken") {
+		t.Fatalf("claim taken nickname: %d %s", resp.StatusCode, body)
+	}
+
+	// The plr_ namespace is reserved for server-minted ids.
+	resp, body = h.call(t, http.MethodPost, "/v1/users", h.key(), map[string]string{"nickname": "Fresh", "member": "plr_impostor"})
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "invalid_member") {
+		t.Fatalf("plr_ claim: %d %s", resp.StatusCode, body)
+	}
+}
+
 func TestNicknameEnrichment(t *testing.T) {
 	h := newHarness(t)
 	h.onboard(t, "enrich@example.com")

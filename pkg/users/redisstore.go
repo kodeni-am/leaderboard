@@ -24,10 +24,14 @@ func namesKey(app string) string      { return "plr:{" + app + "}:names" }
 func nickKey(app string) string       { return "plr:{" + app + "}:nick" }
 
 // createScript claims the lowercased nickname and writes the user record and
-// the id->display mapping in one atomic step. Returns 0 if the name is taken.
+// the id->display mapping in one atomic step. Returns -2 if the id is already
+// a registered player (caller-claimed ids can collide; minted ones can't) and
+// 0 if the name is taken — checked in that order, so a losing claim never
+// consumes the nickname.
 // KEYS: 1=nick hash, 2=names hash, 3=user record
 // ARGV: 1=lower nick, 2=id, 3=display nick, 4=user JSON
 var createScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[3]) == 1 then return -2 end
 if redis.call('HSETNX', KEYS[1], ARGV[1], ARGV[2]) == 0 then return 0 end
 redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
 redis.call('SET', KEYS[3], ARGV[4])
@@ -67,13 +71,17 @@ redis.call('DEL', KEYS[3])
 return 1
 `)
 
-func (s *RedisStore) Create(ctx context.Context, appID, nickname string) (User, error) {
+func (s *RedisStore) Create(ctx context.Context, appID, nickname, member string) (User, error) {
 	display, lower, err := normalizeNickname(nickname)
 	if err != nil {
 		return User{}, err
 	}
-	id, err := newID()
-	if err != nil {
+	var id string
+	if member == "" {
+		if id, err = newID(); err != nil {
+			return User{}, err
+		}
+	} else if id, err = normalizeMemberID(member); err != nil {
 		return User{}, err
 	}
 	now := time.Now().UTC()
@@ -88,8 +96,11 @@ func (s *RedisStore) Create(ctx context.Context, appID, nickname string) (User, 
 	if err != nil {
 		return User{}, err
 	}
-	if ok == 0 {
+	switch ok {
+	case 0:
 		return User{}, ErrNicknameTaken
+	case -2:
+		return User{}, ErrMemberTaken
 	}
 	return u, nil
 }

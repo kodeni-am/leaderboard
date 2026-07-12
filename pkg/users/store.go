@@ -1,8 +1,10 @@
-// Package users is the per-app player registry: server-minted player IDs
-// (plr_...) with friendly nicknames that are unique per app,
-// case-insensitively. It is separate from accounts (dashboard humans) — a
-// users.User is a player inside a game. The player ID is the string games
-// submit as the leaderboard member, so renames never touch board data.
+// Package users is the per-app player registry: player IDs — server-minted
+// (plr_...) or caller-claimed existing board member ids — with friendly
+// nicknames that are unique per app, case-insensitively. It is separate from
+// accounts (dashboard humans) — a users.User is a player inside a game. The
+// player ID is the string games submit as the leaderboard member, so renames
+// never touch board data, and claiming an anonymous member id attaches a
+// nickname to its existing rows in place.
 package users
 
 import (
@@ -20,6 +22,11 @@ var (
 	ErrNotFound        = errors.New("users: user not found")
 	ErrNicknameTaken   = errors.New("users: nickname already taken")
 	ErrInvalidNickname = errors.New("users: nickname must be 1-32 characters with no control or format characters")
+	// ErrMemberTaken is returned when a caller-supplied member id is already a
+	// registered player. Distinct from ErrNicknameTaken so clients can tell
+	// "pick another name" apart from "this member is already claimed".
+	ErrMemberTaken   = errors.New("users: member id already registered")
+	ErrInvalidMember = errors.New("users: member id must be 1-64 characters with no control or format characters and must not start with plr_")
 	// ErrRenameContention is returned when a rename kept losing to concurrent
 	// renames of the same player and exhausted its retries.
 	ErrRenameContention = errors.New("users: rename contention, retry")
@@ -39,9 +46,12 @@ type User struct {
 // Store persists players per app. Nickname uniqueness is enforced on the
 // lowercased form; the display form is stored as entered.
 type Store interface {
-	// Create mints a plr_ id and claims nickname.
-	// Returns ErrNicknameTaken or ErrInvalidNickname.
-	Create(ctx context.Context, appID, nickname string) (User, error)
+	// Create registers a player and claims nickname. With member == "" it
+	// mints a plr_ id; a non-empty member claims that existing (anonymous)
+	// board member id in place, so the nickname attaches to the member's
+	// existing rows. Returns ErrNicknameTaken, ErrInvalidNickname,
+	// ErrMemberTaken (member already registered), or ErrInvalidMember.
+	Create(ctx context.Context, appID, nickname, member string) (User, error)
 	// Get returns the player by id, or ErrNotFound.
 	Get(ctx context.Context, appID, id string) (User, error)
 	// GetByNickname resolves a nickname case-insensitively, or ErrNotFound.
@@ -73,6 +83,23 @@ func normalizeNickname(nick string) (display, lower string, err error) {
 		}
 	}
 	return display, strings.ToLower(display), nil
+}
+
+// normalizeMemberID trims and validates a caller-supplied member id being
+// claimed. The plr_ prefix is reserved for the server-minted namespace — a
+// client must never be able to occupy it. The 64-rune cap bounds what boards
+// accept as member strings from this path.
+func normalizeMemberID(member string) (string, error) {
+	member = strings.TrimSpace(member)
+	if member == "" || utf8.RuneCountInString(member) > 64 || strings.HasPrefix(member, "plr_") {
+		return "", ErrInvalidMember
+	}
+	for _, r := range member {
+		if unicode.Is(unicode.C, r) { // control, format, surrogate, private use
+			return "", ErrInvalidMember
+		}
+	}
+	return member, nil
 }
 
 // newID mints a player id ("plr_" + 12 random hex bytes). The prefix differs
