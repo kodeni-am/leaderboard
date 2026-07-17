@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type AppInfo, type KeyInfo, type RankEntry, type SigningState, type BoardSummary, type WindowSpec, ApiError } from "../api";
 import { useAuth } from "../auth";
@@ -14,10 +14,13 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [playerCount, setPlayerCount] = useState<number | null>(null);
+  const loadAppsReq = useRef(0);
 
   async function loadApps(selectId?: string) {
+    const gen = ++loadAppsReq.current;
     try {
       const { apps } = await api.listApps();
+      if (gen !== loadAppsReq.current) return; // superseded by a newer load
       setApps(apps);
       setAppId((prev) => {
         if (selectId) return selectId;
@@ -25,6 +28,7 @@ export default function Dashboard() {
         return apps[0]?.id ?? "";
       });
     } catch (e) {
+      if (gen !== loadAppsReq.current) return; // superseded; stale errors must not surface either
       setErr((e as ApiError).message);
     } finally {
       setLoading(false);
@@ -38,15 +42,19 @@ export default function Dashboard() {
 
   // Registered players for the selected app. Auxiliary, like nickname
   // enrichment: a failure hides the number rather than surfacing an error.
+  const loadPlayerCountReq = useRef(0);
   const loadPlayerCount = useCallback(async (id: string) => {
+    const gen = ++loadPlayerCountReq.current;
     if (!id) {
       setPlayerCount(null);
       return;
     }
     try {
       const { players } = await api.appStats(id);
+      if (gen !== loadPlayerCountReq.current) return; // superseded by a newer load
       setPlayerCount(players);
     } catch {
+      if (gen !== loadPlayerCountReq.current) return; // superseded; stale errors must not surface either
       setPlayerCount(null);
     }
   }, []);
@@ -168,14 +176,18 @@ function AppWorkspace({ appId, onAppDeleted, onPlayersChanged }: { appId: string
   const [boards, setBoards] = useState<BoardSummary[]>([]);
   const [board, setBoard] = useState("");
   const [err, setErr] = useState("");
+  const loadBoardsReq = useRef(0);
 
   async function loadBoards() {
+    const gen = ++loadBoardsReq.current;
     try {
       const { boards } = await api.listBoards(appId);
+      if (gen !== loadBoardsReq.current) return; // superseded by a newer load
       setBoards(boards);
       const ids = boards.map((b) => b.board);
       setBoard((cur) => (cur && ids.includes(cur) ? cur : ids[0] ?? ""));
     } catch (e) {
+      if (gen !== loadBoardsReq.current) return; // superseded; stale errors must not surface either
       setErr((e as ApiError).message);
     }
   }
@@ -536,6 +548,7 @@ function Viewer({ appId, board, windows, onPlayersChanged }: { appId: string; bo
     onYes: () => Promise<void>;
   } | null>(null);
   const danger = { borderColor: "var(--danger)", color: "var(--danger)" };
+  const loadTopReq = useRef(0);
 
   // The server answers removal_queued when the removal is durably logged but
   // the immediate apply failed — the consumer finishes it shortly.
@@ -572,6 +585,7 @@ function Viewer({ appId, board, windows, onPlayersChanged }: { appId: string; bo
   }
 
   async function loadTop() {
+    const gen = ++loadTopReq.current;
     try {
       // One fetch path for both numbers, so the count always describes the
       // window/segment the entries came from. The count is auxiliary — if it
@@ -581,10 +595,12 @@ function Viewer({ appId, board, windows, onPlayersChanged }: { appId: string; bo
         api.top(appId, board, 25, q),
         api.count(appId, board, q).catch(() => null),
       ]);
+      if (gen !== loadTopReq.current) return; // superseded by a newer load
       setEntries(top.entries);
       setCount(c === null ? null : c.count);
       setErr("");
     } catch (e) {
+      if (gen !== loadTopReq.current) return; // superseded; stale errors must not surface either
       setErr((e as ApiError).message);
     }
   }
