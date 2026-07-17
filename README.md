@@ -140,6 +140,7 @@ curl -s -X POST $BASE/v1/users -H "Authorization: Bearer $KEY" \
 | `GET /v1/boards/{board}/neighbors?member=&k=` | Me ± k |
 | `POST /v1/boards/{board}/friends` | Rank an explicit member list |
 | `GET /v1/boards/{board}/segments` | List the segment names currently live on a board |
+| `GET /v1/boards/{board}/count` | How many members are on the board (honors `segment=`/`window=`) |
 | `POST /v1/users` | Register a player (server-minted id + nickname, unique per app); `member` claims an existing member id in place |
 | `GET /v1/users/{id}` · `GET /v1/users?nickname=` | Fetch / resolve a player |
 | `PATCH /v1/users/{id}` | Rename a player (id and board data unaffected) |

@@ -196,6 +196,7 @@ func (s *Server) Handler() http.Handler {
 	dataPlane("GET /v1/boards/{board}/page", s.handlePage)
 	dataPlane("GET /v1/boards/{board}/neighbors", s.handleNeighbors)
 	dataPlane("GET /v1/boards/{board}/segments", s.handleSegments)
+	dataPlane("GET /v1/boards/{board}/count", s.handleCount)
 	dataPlane("POST /v1/boards/{board}/friends", s.handleFriends)
 
 	// Player registry (optional; nicknames unique per app).
@@ -540,6 +541,22 @@ func (s *Server) handleSegments(w http.ResponseWriter, r *http.Request) {
 		segs = []string{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"segments": segs})
+}
+
+// handleCount returns how many members are on the board as filtered by the
+// window/segment params — the same view /top ranks. It is a separate endpoint
+// rather than a field on /top so the hot read path pays no ZCARD.
+func (s *Server) handleCount(w http.ResponseWriter, r *http.Request) {
+	b, ok := s.readBoard(w, r)
+	if !ok {
+		return
+	}
+	n, err := s.eng.Count(r.Context(), b)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"count": n})
 }
 
 type friendsReq struct {
