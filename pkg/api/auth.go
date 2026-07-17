@@ -427,6 +427,22 @@ func (s *Server) handleRotateSigning(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.signingState(updated))
 }
 
+// handleAppStats returns app-level counters for the dashboard. Owner-plane on
+// purpose: playerbase size is an operator metric, and this is not a path we
+// want to hand to every API-key holder in one call.
+func (s *Server) handleAppStats(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.ownedApp(w, r)
+	if !ok {
+		return
+	}
+	n, err := s.users.Count(r.Context(), app.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"players": n})
+}
+
 func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 	app, ok := s.ownedApp(w, r)
 	if !ok {

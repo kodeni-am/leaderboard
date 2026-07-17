@@ -185,6 +185,7 @@ func (s *Server) Handler() http.Handler {
 	user("GET /v1/apps/{id}/signing", s.handleGetSigning)
 	user("PUT /v1/apps/{id}/signing", s.handleSetSigning)
 	user("POST /v1/apps/{id}/signing/rotate", s.handleRotateSigning)
+	user("GET /v1/apps/{id}/stats", s.handleAppStats)
 
 	// Data plane (API-key or session+app-id).
 	dataPlane("POST /v1/boards", s.handleCreateBoard)

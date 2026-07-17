@@ -131,6 +131,7 @@ curl -s -X POST $BASE/v1/users -H "Authorization: Bearer $KEY" \
 | `POST /auth/signup` · `/auth/login` · `/auth/logout` | Account auth (session cookie) |
 | `GET /auth/verify` · `POST /auth/forgot` · `/auth/reset` | Email verification & password reset |
 | `POST /v1/apps` · `GET /v1/apps` | Create/list apps (session-authed, owner-scoped) → key shown once |
+| `GET /v1/apps/{id}/stats` | App counters — `{"players": N}` registered (session-authed, owner-scoped) |
 | `POST /v1/boards` | Define a board |
 | `GET /v1/boards` | List boards |
 | `POST /v1/boards/{board}/scores` | Submit a score (write-behind) |

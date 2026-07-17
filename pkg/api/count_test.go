@@ -78,3 +78,68 @@ func TestBoardCount(t *testing.T) {
 		t.Fatalf("unauthenticated: %d", resp.StatusCode)
 	}
 }
+
+func TestAppStats(t *testing.T) {
+	h := newHarness(t)
+	h.onboard(t, "stats@example.com")
+
+	// Owner-plane GET: the cookie jar carries the session, no CSRF needed.
+	players := func() int64 {
+		t.Helper()
+		resp, body := h.call(t, http.MethodGet, "/v1/apps/"+h.appID+"/stats", nil, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("stats: %d %s", resp.StatusCode, body)
+		}
+		var out struct {
+			Players int64 `json:"players"`
+		}
+		if err := json.Unmarshal(body, &out); err != nil {
+			t.Fatalf("unmarshal %s: %v", body, err)
+		}
+		return out.Players
+	}
+
+	if n := players(); n != 0 {
+		t.Fatalf("new app: %d players, want 0", n)
+	}
+
+	resp, body := h.call(t, http.MethodPost, "/v1/users", h.key(), map[string]string{"nickname": "Ninja"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register Ninja: %d %s", resp.StatusCode, body)
+	}
+	var u struct {
+		UserID string `json:"user_id"`
+	}
+	if err := json.Unmarshal(body, &u); err != nil {
+		t.Fatalf("unmarshal %s: %v", body, err)
+	}
+	if resp, body := h.call(t, http.MethodPost, "/v1/users", h.key(), map[string]string{"nickname": "Rook"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register Rook: %d %s", resp.StatusCode, body)
+	}
+	if n := players(); n != 2 {
+		t.Fatalf("after 2 registrations: %d, want 2", n)
+	}
+
+	// Deleting a player drops the count.
+	if resp, body := h.call(t, http.MethodDelete, "/v1/users/"+u.UserID, h.sess(), nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete player: %d %s", resp.StatusCode, body)
+	}
+	if n := players(); n != 1 {
+		t.Fatalf("after delete: %d, want 1", n)
+	}
+
+	// Owner plane: no session -> 401, even though the app exists.
+	r, err := http.Get(h.ts.URL + "/v1/apps/" + h.appID + "/stats")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Body.Close()
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated: %d, want 401", r.StatusCode)
+	}
+
+	// Unknown app -> 404, matching the other owner-plane app routes.
+	if resp, _ := h.call(t, http.MethodGet, "/v1/apps/app_nope/stats", nil, nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown app: %d, want 404", resp.StatusCode)
+	}
+}
