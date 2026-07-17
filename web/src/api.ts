@@ -122,6 +122,7 @@ export const api = {
   setSigning: (appId: string, requireSigning: boolean) =>
     req<SigningState>("PUT", `/v1/apps/${appId}/signing`, { require_signing: requireSigning }),
   rotateSigning: (appId: string) => req<SigningState>("POST", `/v1/apps/${appId}/signing/rotate`),
+  appStats: (appId: string) => req<{ players: number }>("GET", `/v1/apps/${appId}/stats`),
 
   listBoards: (appId: string) => req<{ boards: BoardSummary[] }>("GET", "/v1/boards", undefined, appHdr(appId)),
   createBoard: (appId: string, def: BoardDef) => req<unknown>("POST", "/v1/boards", def, appHdr(appId)),

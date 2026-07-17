@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type AppInfo, type KeyInfo, type RankEntry, type SigningState, type BoardSummary, type WindowSpec, ApiError } from "../api";
 import { useAuth } from "../auth";
@@ -13,6 +13,7 @@ export default function Dashboard() {
   const [newKey, setNewKey] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [playerCount, setPlayerCount] = useState<number | null>(null);
 
   async function loadApps(selectId?: string) {
     try {
@@ -34,6 +35,26 @@ export default function Dashboard() {
     void loadApps();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Registered players for the selected app. Auxiliary, like nickname
+  // enrichment: a failure hides the number rather than surfacing an error.
+  const loadPlayerCount = useCallback(async (id: string) => {
+    if (!id) {
+      setPlayerCount(null);
+      return;
+    }
+    try {
+      const { players } = await api.appStats(id);
+      setPlayerCount(players);
+    } catch {
+      setPlayerCount(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    setPlayerCount(null); // never show the previous app's count against this one
+    void loadPlayerCount(appId);
+  }, [appId, loadPlayerCount]);
 
   async function logout() {
     try {
@@ -82,10 +103,13 @@ export default function Dashboard() {
                     <option key={a.id} value={a.id}>{a.name} — {a.id}</option>
                   ))}
                 </select>
+                {playerCount !== null && (
+                  <span className="dim mono" style={{ fontSize: 13 }}>{playerCount.toLocaleString()} players</span>
+                )}
               </div>
               <NewAppButton onCreate={(name) => createApp(name, setNewKey, loadApps, setErr)} />
             </div>
-            {appId && <AppWorkspace appId={appId} onAppDeleted={() => { setNewKey(""); void loadApps(); }} />}
+            {appId && <AppWorkspace appId={appId} onAppDeleted={() => { setNewKey(""); void loadApps(); }} onPlayersChanged={() => void loadPlayerCount(appId)} />}
           </>
         )}
       </div>
@@ -140,7 +164,7 @@ function EmptyApps({ onCreate }: { onCreate: (name: string) => void }) {
 
 // ---- per-app workspace: boards + viewer + test submit ----
 
-function AppWorkspace({ appId, onAppDeleted }: { appId: string; onAppDeleted: () => void }) {
+function AppWorkspace({ appId, onAppDeleted, onPlayersChanged }: { appId: string; onAppDeleted: () => void; onPlayersChanged: () => void }) {
   const [boards, setBoards] = useState<BoardSummary[]>([]);
   const [board, setBoard] = useState("");
   const [err, setErr] = useState("");
@@ -171,7 +195,7 @@ function AppWorkspace({ appId, onAppDeleted }: { appId: string; onAppDeleted: ()
         <BoardList boards={boards.map((b) => b.board)} active={board} onPick={setBoard} />
       </div>
       <div>
-        {board ? <Viewer key={board} appId={appId} board={board} windows={boards.find((b) => b.board === board)?.windows ?? []} /> : (
+        {board ? <Viewer key={board} appId={appId} board={board} windows={boards.find((b) => b.board === board)?.windows ?? []} onPlayersChanged={onPlayersChanged} /> : (
           <div className="panel dim" style={{ textAlign: "center", padding: 48 }}>Create a board to get started.</div>
         )}
       </div>
@@ -491,7 +515,7 @@ function windowOptions(windows: WindowSpec[]): { value: string; label: string }[
   return out;
 }
 
-function Viewer({ appId, board, windows }: { appId: string; board: string; windows: WindowSpec[] }) {
+function Viewer({ appId, board, windows, onPlayersChanged }: { appId: string; board: string; windows: WindowSpec[]; onPlayersChanged: () => void }) {
   const opts = windowOptions(windows);
   const [entries, setEntries] = useState<RankEntry[]>([]);
   const [count, setCount] = useState<number | null>(null);
@@ -541,6 +565,7 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
       label: "Delete player",
       onYes: async () => {
         await api.deleteUser(appId, member);
+        onPlayersChanged();
         await loadTop();
       },
     });
@@ -613,6 +638,7 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
         board={board}
         segment={seg}
         busy={busy}
+        onRegistered={onPlayersChanged}
         onSubmit={async (m, s) => {
           setBusy(true);
           try {
@@ -696,7 +722,7 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
   );
 }
 
-function TestSubmit({ appId, board, segment, busy, onSubmit }: { appId: string; board: string; segment: string; busy: boolean; onSubmit: (m: string, s: number) => void }) {
+function TestSubmit({ appId, board, segment, busy, onRegistered, onSubmit }: { appId: string; board: string; segment: string; busy: boolean; onRegistered: () => void; onSubmit: (m: string, s: number) => void }) {
   const [member, setMember] = useState("");
   const [score, setScore] = useState("");
   const [nickname, setNickname] = useState("");
@@ -711,6 +737,7 @@ function TestSubmit({ appId, board, segment, busy, onSubmit }: { appId: string; 
       const u = await api.registerUser(appId, nickname);
       setMember(u.user_id);
       setRegMsg(`${u.nickname} → ${u.user_id}`);
+      onRegistered();
     } catch (e) {
       setRegMsg((e as ApiError).status === 409 ? "Nickname taken — try another." : (e as ApiError).message);
     }
