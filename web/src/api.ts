@@ -90,6 +90,12 @@ function qs(q?: QueryOpts): string {
   return s ? "&" + s : "";
 }
 
+// qsFirst is qs for endpoints with no preceding param: "?a=b" not "&a=b".
+function qsFirst(q?: QueryOpts): string {
+  const s = qs(q);
+  return s ? "?" + s.slice(1) : "";
+}
+
 const appHdr = (appId: string) => ({ "X-App-Id": appId });
 
 interface Entries {
@@ -125,6 +131,8 @@ export const api = {
     req<UserInfo>("POST", "/v1/users", { nickname }, appHdr(appId)),
   top: (appId: string, board: string, n: number, q?: QueryOpts) =>
     req<Entries>("GET", `/v1/boards/${encodeURIComponent(board)}/top?n=${n}${qs(q)}`, undefined, appHdr(appId)),
+  count: (appId: string, board: string, q?: QueryOpts) =>
+    req<{ count: number }>("GET", `/v1/boards/${encodeURIComponent(board)}/count${qsFirst(q)}`, undefined, appHdr(appId)),
   rank: (appId: string, board: string, member: string, q?: QueryOpts) =>
     req<RankEntry>("GET", `/v1/boards/${encodeURIComponent(board)}/rank?member=${encodeURIComponent(member)}${qs(q)}`, undefined, appHdr(appId)),
   neighbors: (appId: string, board: string, member: string, k: number, q?: QueryOpts) =>

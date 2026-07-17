@@ -494,6 +494,7 @@ function windowOptions(windows: WindowSpec[]): { value: string; label: string }[
 function Viewer({ appId, board, windows }: { appId: string; board: string; windows: WindowSpec[] }) {
   const opts = windowOptions(windows);
   const [entries, setEntries] = useState<RankEntry[]>([]);
+  const [count, setCount] = useState<number | null>(null);
   const [win, setWin] = useState(opts[0]?.value ?? "all");
   // Segments are ad-hoc (set per submit, e.g. "region=eu"), not declared on the
   // board, so they can't be enumerated — it's a free-text filter (blank = all),
@@ -547,8 +548,16 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
 
   async function loadTop() {
     try {
-      const { entries } = await api.top(appId, board, 25, { window: win, segment: seg || undefined });
-      setEntries(entries);
+      // One fetch path for both numbers, so the count always describes the
+      // window/segment the entries came from. The count is auxiliary — if it
+      // fails, the board still renders (null just hides the "OF N").
+      const q = { window: win, segment: seg || undefined };
+      const [top, c] = await Promise.all([
+        api.top(appId, board, 25, q),
+        api.count(appId, board, q).catch(() => null),
+      ]);
+      setEntries(top.entries);
+      setCount(c === null ? null : c.count);
       setErr("");
     } catch (e) {
       setErr((e as ApiError).message);
@@ -624,7 +633,7 @@ function Viewer({ appId, board, windows }: { appId: string; board: string; windo
 
       <div className="panel" style={{ padding: 0 }}>
         <div className="eyebrow" style={{ padding: "14px 18px", borderBottom: "1px solid var(--line)" }}>
-          TOP {entries.length}{win !== "all" ? ` · ${opts.find((o) => o.value === win)?.label ?? win}` : ""}{seg ? ` · ${seg}` : ""}
+          TOP {entries.length}{count !== null && count > entries.length ? ` OF ${count.toLocaleString()}` : ""}{win !== "all" ? ` · ${opts.find((o) => o.value === win)?.label ?? win}` : ""}{seg ? ` · ${seg}` : ""}
         </div>
         {err && <div className="notice err" style={{ margin: 16 }}>{err}</div>}
         {entries.length === 0 && !err && <div className="dim" style={{ padding: 18, fontSize: 14 }}>No entries in this window yet — submit a score above.</div>}
