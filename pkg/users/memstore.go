@@ -127,3 +127,9 @@ func (m *MemStore) Delete(_ context.Context, appID, id string) error {
 	delete(m.users[appID], id)
 	return nil
 }
+
+func (m *MemStore) Count(_ context.Context, appID string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return int64(len(m.users[appID])), nil
+}

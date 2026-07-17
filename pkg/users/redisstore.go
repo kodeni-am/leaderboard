@@ -224,3 +224,10 @@ func (s *RedisStore) Delete(ctx context.Context, appID, id string) error {
 	}
 	return ErrDeleteContention
 }
+
+// Count returns the app's registered-player count. The names hash holds
+// exactly one field per player — Create HSETs it, Delete HDELs it, and Rename
+// HSETs the same field — so HLEN is exact and O(1) with no new index.
+func (s *RedisStore) Count(ctx context.Context, appID string) (int64, error) {
+	return s.rdb.HLen(ctx, namesKey(appID)).Result()
+}

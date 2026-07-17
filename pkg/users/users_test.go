@@ -299,6 +299,42 @@ func testStore(t *testing.T, s Store, app string) {
 	if memClaims != 1 {
 		t.Errorf("claimed member holds %d nickname claims, want exactly 1", memClaims)
 	}
+
+	// Count reports the app's registered players. This runs in its own app
+	// namespace so the expected numbers don't depend on what the sections
+	// above created in the shared app.
+	cntApp := app + "cnt"
+	if n, err := s.Count(ctx, cntApp); err != nil || n != 0 {
+		t.Fatalf("fresh app: count %d / %v, want 0", n, err)
+	}
+	alpha, err := s.Create(ctx, cntApp, "Alpha", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(ctx, cntApp, "Beta", ""); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.Count(ctx, cntApp); err != nil || n != 2 {
+		t.Fatalf("after 2 creates: count %d / %v, want 2", n, err)
+	}
+	// A rename moves the nickname claim but must not change the player count.
+	if _, err := s.Rename(ctx, cntApp, alpha.ID, "Alpha2"); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.Count(ctx, cntApp); err != nil || n != 2 {
+		t.Fatalf("after rename: count %d / %v, want 2", n, err)
+	}
+	// Delete releases the registration.
+	if err := s.Delete(ctx, cntApp, alpha.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.Count(ctx, cntApp); err != nil || n != 1 {
+		t.Fatalf("after delete: count %d / %v, want 1", n, err)
+	}
+	// Counts are scoped per app.
+	if n, err := s.Count(ctx, cntApp+"x"); err != nil || n != 0 {
+		t.Fatalf("unrelated app: count %d / %v, want 0", n, err)
+	}
 }
 
 func TestMemStore(t *testing.T) { testStore(t, NewMemStore(), "app_memtest") }

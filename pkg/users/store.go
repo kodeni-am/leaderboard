@@ -68,6 +68,10 @@ type Store interface {
 	// are never reused, so a replayed delete can never affect a later
 	// registration that re-claimed the name.
 	Delete(ctx context.Context, appID, id string) error
+	// Count returns the number of registered players in the app. An unknown
+	// app counts zero — this is not an authorization boundary; callers that
+	// need one check ownership before calling.
+	Count(ctx context.Context, appID string) (int64, error)
 }
 
 // normalizeNickname trims and validates nick, returning the display form and
