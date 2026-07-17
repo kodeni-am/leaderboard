@@ -70,12 +70,14 @@ func TestBoardCount(t *testing.T) {
 	if resp, _ := h.call(t, http.MethodGet, "/v1/boards/nope/count", h.key(), nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown board: %d", resp.StatusCode)
 	}
-	// Data plane requires auth.
-	if resp, _ := h.call(t, http.MethodPost, "/auth/logout", map[string]string{"X-CSRF-Token": h.csrf}, nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("logout: %d", resp.StatusCode)
+	// Data plane requires auth: a cookie-less client sends no session at all.
+	r, err := http.Get(h.ts.URL + "/v1/boards/high/count")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if resp, _ := h.call(t, http.MethodGet, "/v1/boards/high/count", nil, nil); resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated: %d", resp.StatusCode)
+	r.Body.Close()
+	if r.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated: %d, want 401", r.StatusCode)
 	}
 }
 
