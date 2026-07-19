@@ -112,7 +112,13 @@ export default function Dashboard() {
                   ))}
                 </select>
                 {playerCount !== null && (
-                  <span className="dim mono" style={{ fontSize: 13 }}>{playerCount.toLocaleString()} players</span>
+                  <span
+                    className="dim mono"
+                    style={{ fontSize: 13 }}
+                    title="Registered players (nicknames) in this app. A board can have more members than this — anyone who submits a score counts on the board without registering. See each board's TOP N OF M."
+                  >
+                    {playerCount.toLocaleString()} registered
+                  </span>
                 )}
               </div>
               <NewAppButton onCreate={(name) => createApp(name, setNewKey, loadApps, setErr)} />
