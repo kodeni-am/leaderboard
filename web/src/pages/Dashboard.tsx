@@ -1,5 +1,5 @@
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, type AppInfo, type KeyInfo, type RankEntry, type SigningState, type BoardSummary, type WindowSpec, ApiError } from "../api";
 import { useAuth } from "../auth";
 import { Logo, Field, Spinner, ConfirmDialog, PositionRule } from "../components";
@@ -9,12 +9,32 @@ export default function Dashboard() {
   const nav = useNavigate();
 
   const [apps, setApps] = useState<AppInfo[]>([]);
-  const [appId, setAppId] = useState<string>("");
   const [newKey, setNewKey] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [playerCount, setPlayerCount] = useState<number | null>(null);
   const loadAppsReq = useRef(0);
+
+  // The selected app lives in ?app=, not in component state, so a reload or a
+  // shared link stays on the same app instead of snapping back to the first.
+  // Switching apps replaces the history entry rather than pushing one — a
+  // selector shouldn't fill the Back button.
+  const [params, setParams] = useSearchParams();
+  const appId = params.get("app") ?? "";
+  const selectApp = useCallback(
+    (id: string) => {
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (id) next.set("app", id);
+          else next.delete("app");
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
 
   async function loadApps(selectId?: string) {
     const gen = ++loadAppsReq.current;
@@ -22,11 +42,12 @@ export default function Dashboard() {
       const { apps } = await api.listApps();
       if (gen !== loadAppsReq.current) return; // superseded by a newer load
       setApps(apps);
-      setAppId((prev) => {
-        if (selectId) return selectId;
-        if (prev && apps.some((a) => a.id === prev)) return prev;
-        return apps[0]?.id ?? "";
-      });
+      // Precedence: an explicit pick (a just-created app) → whatever ?app=
+      // already names, while it still exists → the first app. A stale id — a
+      // deleted app, or another account's — falls back rather than leaving an
+      // empty workspace, and the URL is corrected to match.
+      const keep = selectId ?? (apps.some((a) => a.id === appId) ? appId : apps[0]?.id ?? "");
+      if (keep !== appId) selectApp(keep);
     } catch (e) {
       if (gen !== loadAppsReq.current) return; // superseded; stale errors must not surface either
       setErr((e as ApiError).message);
@@ -112,7 +133,7 @@ export default function Dashboard() {
                 <div className="panel-head">
                   <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
                     <span className="label">App</span>
-                    <select value={appId} onChange={(e) => setAppId(e.target.value)} style={{ width: "auto", minWidth: 240 }}>
+                    <select value={appId} onChange={(e) => selectApp(e.target.value)} style={{ width: "auto", minWidth: 240 }}>
                       {apps.map((a) => (
                         <option key={a.id} value={a.id}>{a.name} — {a.id}</option>
                       ))}
