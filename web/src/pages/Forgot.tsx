@@ -22,12 +22,14 @@ export default function Forgot() {
   return (
     <AuthShell title="Reset password" foot={<Link to="/login">Back to sign in</Link>}>
       {done ? (
-        <div className="notice ok">If an account exists for <b>{email}</b>, a reset link is on its way.</div>
+        <div className="notice notice-attn">
+          If an account exists for <b>{email}</b>, a reset link is on its way.
+        </div>
       ) : (
         <form onSubmit={submit}>
           <Field label="Email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@studio.com" />
-          <button className="btn" disabled={busy} type="submit" style={{ width: "100%", justifyContent: "center", marginTop: 6 }}>
-            {busy ? "…" : "Send reset link"}
+          <button className="btn btn-wide" disabled={busy} type="submit" style={{ marginTop: 6 }}>
+            {busy ? "Sending…" : "Send reset link"}
           </button>
         </form>
       )}

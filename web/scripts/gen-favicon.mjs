@@ -1,5 +1,5 @@
-// Renders the OpenLeaderboard favicon (the podium mark, matching favicon.svg
-// and the Logo component) to raster PNGs and an .ico, using only Node built-ins
+// Renders the OpenLeaderboard favicon (the measure-and-tick mark, matching
+// favicon.svg and the Logo component) to raster PNGs and an .ico, using only Node built-ins
 // (zlib) — no image dependencies. Re-run after changing the geometry/colors:
 //   node scripts/gen-favicon.mjs
 import { deflateSync } from "node:zlib";
@@ -11,14 +11,15 @@ const OUT = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 mkdirSync(OUT, { recursive: true });
 
 // Geometry on a 32-unit canvas (identical to public/favicon.svg).
-const BG = "#0a0b0d";
+const BG = "#0b0e13";
 const bars = [
-  { x: 6, y: 17, w: 5, h: 9, c: "#5a626d" },
-  { x: 13.5, y: 10, w: 5, h: 16, c: "#c6f135" },
-  { x: 21, y: 14, w: 5, h: 12, c: "#38d6f2" },
+  { x: 5, y: 15.2, w: 22, h: 1.6, c: "#6e7a88" }, // the measured span
+  { x: 5, y: 11, w: 1.6, h: 10, c: "#6e7a88" }, // rank 1 end
+  { x: 25.4, y: 11, w: 1.6, h: 10, c: "#6e7a88" }, // last-member end
+  { x: 17.4, y: 7, w: 3.2, h: 18, c: "#f0973a" }, // the position tick
 ];
 const CANVAS = 32;
-const BG_RADIUS = 7;
+const BG_RADIUS = 6;
 
 const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 const bgRGB = hex(BG);

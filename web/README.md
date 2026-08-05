@@ -1,9 +1,32 @@
 # OpenLeaderboard — Web (landing + dashboard)
 
-React + Vite single-page app: the public **landing page** and the authenticated
-**dashboard** (accounts, apps & API keys, board management, leaderboard viewer,
-test-submit). Aesthetic: "esports telemetry" — dark, electric-lime accent, HUD
-display type, mono numerals.
+React + Vite single-page app: the public **landing page**, the **docs**, the
+account screens, and the authenticated **dashboard** (apps & API keys, board
+management, leaderboard viewer, test-submit).
+
+## Design system — "cold instrument"
+
+The portal is built like measuring equipment, not a game menu. All tokens live
+at the top of `src/index.css`; the rules that keep it coherent:
+
+- **Surfaces.** Matte blue-black (`--ink`) with panel faces one step up. Depth
+  is a 1px lit top edge — no gradients, glows, background grids, or scanlines.
+- **Colour is reserved.** `--lamp` (amber) means live, rank 1, shown-once, or
+  pending; `--alarm` (red) means destructive or failed. Everything else is a
+  step of the cold grey ramp. Row-level destructive actions use
+  `.btn-danger-quiet`, which only turns red on hover, so the alarm colour never
+  becomes wallpaper.
+- **Type.** Archivo (widened) for headings, Instrument Sans for prose, IBM Plex
+  Mono for anything that is data, an id, or a label. Numerals in columns are
+  tabular; large standalone figures are proportional.
+- **The panel** (`.panel` + `.panel-head`) is the one container: an engraved
+  head strip naming the instrument and reporting its state, over a body.
+- **The position rule** (`PositionRule` in `src/components.tsx`) is the
+  signature element — where one member stands inside the whole ordered set. An
+  approximate rank renders as a band rather than a tick, so the mark never
+  claims more precision than the API's `exact` flag carries. It appears on the
+  landing hero, in the docs' exact-vs-approximate section, and in the
+  dashboard's rank lookup.
 
 ## Develop
 

@@ -2,7 +2,7 @@ import { type FormEvent, useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom";
 import { api, type AppInfo, type KeyInfo, type RankEntry, type SigningState, type BoardSummary, type WindowSpec, ApiError } from "../api";
 import { useAuth } from "../auth";
-import { Logo, Field, Spinner, ConfirmDialog } from "../components";
+import { Logo, Field, Spinner, ConfirmDialog, PositionRule } from "../components";
 
 export default function Dashboard() {
   const { user, setUser } = useAuth();
@@ -77,55 +77,68 @@ export default function Dashboard() {
   if (loading) return <Spinner full />;
 
   return (
-    <div style={{ position: "relative", zIndex: 2, minHeight: "100vh" }}>
-      <header className="spread" style={{ borderBottom: "1px solid var(--line)", padding: "16px 24px" }}>
-        <Logo />
-        <div className="row" style={{ gap: 16 }}>
-          <span className="dim mono" style={{ fontSize: 13 }}>{user?.email}</span>
-          <button className="btn btn-ghost btn-sm" onClick={() => void logout()}>Sign out</button>
+    <div style={{ minHeight: "100vh" }}>
+      <header className="topbar">
+        <div className="wrap topbar-inner">
+          <Logo />
+          <div className="row" style={{ gap: 16 }}>
+            <span className="label" style={{ letterSpacing: "0.08em", textTransform: "none" }}>{user?.email}</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => void logout()}>Sign out</button>
+          </div>
         </div>
       </header>
 
-      <div className="container" style={{ padding: "28px 24px 80px" }}>
-        {err && <div className="notice err">{err}</div>}
-        {newKey && (
-          <div className="notice ok">
-            <div style={{ marginBottom: 6 }}><b>API key created.</b> Copy it now — it’s shown only once.</div>
-            <div className="row" style={{ gap: 10 }}>
-              <code className="muted-code" style={{ flex: 1, overflowX: "auto" }}>{newKey}</code>
-              <button className="btn btn-sm" onClick={() => void navigator.clipboard?.writeText(newKey)}>Copy</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setNewKey("")}>Dismiss</button>
-            </div>
-          </div>
-        )}
-
-        {apps.length === 0 ? (
-          <EmptyApps onCreate={(name) => createApp(name, setNewKey, loadApps, setErr)} />
-        ) : (
-          <>
-            <div className="spread" style={{ marginBottom: 22 }}>
-              <div className="row" style={{ gap: 10 }}>
-                <span className="eyebrow">APP</span>
-                <select value={appId} onChange={(e) => setAppId(e.target.value)} style={{ width: "auto", minWidth: 220 }}>
-                  {apps.map((a) => (
-                    <option key={a.id} value={a.id}>{a.name} — {a.id}</option>
-                  ))}
-                </select>
-                {playerCount !== null && (
-                  <span
-                    className="dim mono"
-                    style={{ fontSize: 13 }}
-                    title="Registered players (nicknames) in this app. A board can have more members than this — anyone who submits a score counts on the board without registering. See each board's TOP N OF M."
-                  >
-                    {playerCount.toLocaleString()} registered
-                  </span>
-                )}
+      <div className="wrap" style={{ paddingTop: 22, paddingBottom: 80 }}>
+        <div className="stack">
+          {err && <div className="notice notice-alarm">{err}</div>}
+          {newKey && (
+            <div className="notice notice-attn">
+              <div style={{ marginBottom: 8 }}>
+                <b>API key created.</b> Copy it now — this is the only time it is shown.
               </div>
-              <NewAppButton onCreate={(name) => createApp(name, setNewKey, loadApps, setErr)} />
+              <div className="row collapse" style={{ gap: 10 }}>
+                <code className="secret" style={{ flex: 1 }}>{newKey}</code>
+                <button className="btn btn-sm" onClick={() => void navigator.clipboard?.writeText(newKey)}>Copy</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setNewKey("")}>Dismiss</button>
+              </div>
             </div>
-            {appId && <AppWorkspace appId={appId} onAppDeleted={() => { setNewKey(""); void loadApps(); }} onPlayersChanged={() => void loadPlayerCount(appId)} />}
-          </>
-        )}
+          )}
+
+          {apps.length === 0 ? (
+            <EmptyApps onCreate={(name) => createApp(name, setNewKey, loadApps, setErr)} />
+          ) : (
+            <>
+              <div className="panel">
+                <div className="panel-head">
+                  <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+                    <span className="label">App</span>
+                    <select value={appId} onChange={(e) => setAppId(e.target.value)} style={{ width: "auto", minWidth: 240 }}>
+                      {apps.map((a) => (
+                        <option key={a.id} value={a.id}>{a.name} — {a.id}</option>
+                      ))}
+                    </select>
+                    {playerCount !== null && (
+                      <span
+                        className="label"
+                        title="Registered players (nicknames) in this app. A board can have more members than this — anyone who submits a score counts on the board without registering. See each board's TOP N OF M."
+                      >
+                        {playerCount.toLocaleString()} registered
+                      </span>
+                    )}
+                  </div>
+                  <NewAppButton onCreate={(name) => createApp(name, setNewKey, loadApps, setErr)} />
+                </div>
+              </div>
+              {appId && (
+                <AppWorkspace
+                  appId={appId}
+                  onAppDeleted={() => { setNewKey(""); void loadApps(); }}
+                  onPlayersChanged={() => void loadPlayerCount(appId)}
+                />
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -149,14 +162,14 @@ async function createApp(
 function NewAppButton({ onCreate }: { onCreate: (name: string) => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  if (!open) return <button className="btn btn-sm" onClick={() => setOpen(true)}>+ New app</button>;
+  if (!open) return <button className="btn btn-sm" onClick={() => setOpen(true)}>New app</button>;
   return (
     <form
       className="row"
       style={{ gap: 8 }}
       onSubmit={(e) => { e.preventDefault(); if (name.trim()) { onCreate(name.trim()); setName(""); setOpen(false); } }}
     >
-      <input autoFocus placeholder="App name" value={name} onChange={(e) => setName(e.target.value)} style={{ width: 200 }} />
+      <input autoFocus placeholder="App name" value={name} onChange={(e) => setName(e.target.value)} style={{ width: 190 }} />
       <button className="btn btn-sm" type="submit">Create</button>
     </form>
   );
@@ -165,13 +178,20 @@ function NewAppButton({ onCreate }: { onCreate: (name: string) => void }) {
 function EmptyApps({ onCreate }: { onCreate: (name: string) => void }) {
   const [name, setName] = useState("");
   return (
-    <div className="panel" style={{ maxWidth: 460, margin: "40px auto", textAlign: "center" }}>
-      <h2 style={{ fontSize: 22 }}>Create your first app</h2>
-      <p className="dim" style={{ fontSize: 14 }}>An app groups your boards and gets an API key for your game client.</p>
-      <form onSubmit={(e) => { e.preventDefault(); if (name.trim()) onCreate(name.trim()); }} style={{ textAlign: "left", marginTop: 14 }}>
-        <Field label="App name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Game" />
-        <button className="btn" type="submit" style={{ width: "100%", justifyContent: "center" }}>Create app</button>
-      </form>
+    <div className="panel" style={{ maxWidth: 460, margin: "44px auto" }}>
+      <div className="panel-head">
+        <span className="label">First app</span>
+      </div>
+      <div className="panel-body">
+        <h3 style={{ marginBottom: 8 }}>Create an app to get an API key</h3>
+        <p className="dim" style={{ fontSize: 14 }}>
+          An app groups your boards and holds the API key your game client uses.
+        </p>
+        <form onSubmit={(e) => { e.preventDefault(); if (name.trim()) onCreate(name.trim()); }} style={{ marginTop: 18 }}>
+          <Field label="App name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Game" />
+          <button className="btn btn-wide" type="submit">Create app</button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -205,16 +225,29 @@ function AppWorkspace({ appId, onAppDeleted, onPlayersChanged }: { appId: string
 
   return (
     <div className="dash-grid">
-      <div className="stack-sm">
-        {err && <div className="notice err">{err}</div>}
+      <div className="stack">
+        {err && <div className="notice notice-alarm">{err}</div>}
+        <BoardList boards={boards.map((b) => b.board)} active={board} onPick={setBoard} />
+        <BoardCreator appId={appId} onCreated={loadBoards} />
         <AppKeys appId={appId} onDeleted={onAppDeleted} />
         <AppSigning appId={appId} />
-        <BoardCreator appId={appId} onCreated={loadBoards} />
-        <BoardList boards={boards.map((b) => b.board)} active={board} onPick={setBoard} />
       </div>
       <div>
-        {board ? <Viewer key={board} appId={appId} board={board} windows={boards.find((b) => b.board === board)?.windows ?? []} onPlayersChanged={onPlayersChanged} /> : (
-          <div className="panel dim" style={{ textAlign: "center", padding: 48 }}>Create a board to get started.</div>
+        {board ? (
+          <Viewer
+            key={board}
+            appId={appId}
+            board={board}
+            windows={boards.find((b) => b.board === board)?.windows ?? []}
+            onPlayersChanged={onPlayersChanged}
+          />
+        ) : (
+          <div className="panel">
+            <div className="panel-head"><span className="label">Board</span></div>
+            <div className="panel-body dim" style={{ textAlign: "center", padding: 48 }}>
+              Create a board on the left to start ranking scores.
+            </div>
+          </div>
         )}
       </div>
     </div>
@@ -223,23 +256,15 @@ function AppWorkspace({ appId, onAppDeleted, onPlayersChanged }: { appId: string
 
 function BoardList({ boards, active, onPick }: { boards: string[]; active: string; onPick: (b: string) => void }) {
   return (
-    <div className="panel" style={{ padding: 0 }}>
-      <div className="eyebrow" style={{ padding: "14px 18px", borderBottom: "1px solid var(--line)" }}>BOARDS · {boards.length}</div>
-      {boards.length === 0 && <div className="dim" style={{ padding: 18, fontSize: 14 }}>No boards yet.</div>}
+    <div className="panel">
+      <div className="panel-head">
+        <span className="label">Boards</span>
+        <span className="label">{boards.length}</span>
+      </div>
+      {boards.length === 0 && <div className="panel-body dim" style={{ fontSize: 14 }}>No boards yet.</div>}
       {boards.map((b) => (
-        <button
-          key={b}
-          onClick={() => onPick(b)}
-          className="mono"
-          style={{
-            display: "block", width: "100%", textAlign: "left", padding: "11px 18px",
-            border: "none", borderBottom: "1px solid var(--line)", cursor: "pointer",
-            background: b === active ? "var(--bg-elev2)" : "transparent",
-            color: b === active ? "var(--accent)" : "var(--text-dim)",
-            fontSize: 14,
-          }}
-        >
-          {b === active ? "▸ " : "  "}{b}
+        <button key={b} className="board-row" aria-current={b === active} onClick={() => onPick(b)}>
+          {b}
         </button>
       ))}
     </div>
@@ -270,8 +295,6 @@ function AppKeys({ appId, onDeleted }: { appId: string; onDeleted: () => void })
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId]);
-
-  const danger = { borderColor: "var(--danger)", color: "var(--danger)" };
 
   async function issue() {
     try {
@@ -310,29 +333,31 @@ function AppKeys({ appId, onDeleted }: { appId: string; onDeleted: () => void })
   return (
     <>
       <div className="panel">
-        <div className="spread" style={{ marginBottom: 12 }}>
-          <span className="eyebrow">API KEYS · {keys.length}</span>
-          <button className="btn btn-sm" onClick={() => void issue()}>+ New key</button>
+        <div className="panel-head">
+          <span className="label">API keys · {keys.length}</span>
+          <button className="btn btn-sm" onClick={() => void issue()}>New key</button>
         </div>
-        {err && <div className="notice err">{err}</div>}
-        {newKey && (
-          <div className="notice ok" style={{ wordBreak: "break-all" }}>
-            <div style={{ marginBottom: 6 }}><b>New key</b> — copy now, shown once:</div>
-            <code className="muted-code" style={{ display: "block", marginBottom: 8 }}>{newKey}</code>
-            <button className="btn btn-sm" onClick={() => void navigator.clipboard?.writeText(newKey)}>Copy</button>
+        <div className="panel-body">
+          <div className="stack-tight">
+            {err && <div className="notice notice-alarm">{err}</div>}
+            {newKey && (
+              <div className="notice notice-attn">
+                <div style={{ marginBottom: 8 }}><b>New key</b> — copy it now, it is shown once.</div>
+                <code className="secret" style={{ marginBottom: 10 }}>{newKey}</code>
+                <button className="btn btn-sm" onClick={() => void navigator.clipboard?.writeText(newKey)}>Copy</button>
+              </div>
+            )}
+            {keys.map((k) => (
+              <div key={k.id} className="spread" style={{ fontSize: 13 }}>
+                <code className="mono">{k.prefix}</code>
+                <button className="btn btn-danger-quiet btn-sm" onClick={() => askRevoke(k)}>Revoke</button>
+              </div>
+            ))}
+            {keys.length === 0 && <div className="dim" style={{ fontSize: 13.5 }}>No active keys. Create one to authenticate your game client.</div>}
           </div>
-        )}
-        <div className="stack-sm">
-          {keys.map((k) => (
-            <div key={k.id} className="spread" style={{ fontSize: 13 }}>
-              <code className="mono" style={{ color: "var(--cyan)" }}>{k.prefix}</code>
-              <button className="btn btn-ghost btn-sm" style={danger} onClick={() => askRevoke(k)}>Revoke</button>
-            </div>
-          ))}
-          {keys.length === 0 && <div className="dim" style={{ fontSize: 13 }}>No active keys — create one.</div>}
         </div>
-        <div style={{ borderTop: "1px solid var(--line)", marginTop: 14, paddingTop: 14 }}>
-          <button className="btn btn-ghost btn-sm" style={danger} onClick={askDelete}>Delete app</button>
+        <div className="panel-foot">
+          <button className="btn btn-danger btn-sm" onClick={askDelete}>Delete app</button>
         </div>
       </div>
       {confirmState && (
@@ -400,36 +425,44 @@ function AppSigning({ appId }: { appId: string }) {
   return (
     <>
       <div className="panel">
-        <div className="spread" style={{ marginBottom: 12 }}>
-          <span className="eyebrow">SIGNED SUBMISSIONS</span>
+        <div className="panel-head">
+          <span className="label">Signed submissions</span>
+          {st.available && (
+            <span className="row label" style={{ gap: 7 }}>
+              {st.require_signing && <span className="lamp-dot" />}
+              {st.require_signing ? "Required" : "Off"}
+            </span>
+          )}
         </div>
-        {err && <div className="notice err">{err}</div>}
-        {!st.available ? (
-          <p className="dim" style={{ fontSize: 13 }}>
-            Signed submissions aren’t enabled on this server — scores are authenticated by your API key.
-          </p>
-        ) : (
-          <>
-            <p className="dim" style={{ fontSize: 13, marginBottom: 10 }}>
-              Require game clients to HMAC-sign each submission (anti-cheat). Sign with the app secret below; keep it server-side — never ship it in a public client build.
+        <div className="panel-body">
+          {err && <div className="notice notice-alarm" style={{ marginBottom: 12 }}>{err}</div>}
+          {!st.available ? (
+            <p className="dim" style={{ fontSize: 13.5 }}>
+              This server has signed submissions turned off. Scores are authenticated by your API key.
             </p>
-            <label className="spread" style={{ fontSize: 14, marginBottom: 12, cursor: "pointer" }}>
-              <span>Require signed submissions</span>
-              <input type="checkbox" checked={st.require_signing} onChange={(e) => void toggle(e.target.checked)} />
-            </label>
-            <div className="spread" style={{ fontSize: 13, marginBottom: 8 }}>
-              <span className="dim">Signing secret · v{st.version}</span>
-              <div className="row" style={{ gap: 8 }}>
-                <button className="btn btn-ghost btn-sm" onClick={() => setReveal((r) => !r)}>{reveal ? "Hide" : "Reveal"}</button>
-                <button className="btn btn-ghost btn-sm" onClick={() => st.secret && void navigator.clipboard?.writeText(st.secret)}>Copy</button>
-                <button className="btn btn-ghost btn-sm" onClick={() => setConfirmRotate(true)}>Rotate</button>
+          ) : (
+            <>
+              <p className="dim" style={{ fontSize: 13.5, marginBottom: 14 }}>
+                Require game clients to HMAC-sign every submission, so a leaked API key alone cannot
+                post forged scores. Sign with the secret below and keep it server-side — never ship it
+                in a public client build.
+              </p>
+              <label className="spread" style={{ fontSize: 14, marginBottom: 14, cursor: "pointer" }}>
+                <span>Require signed submissions</span>
+                <input type="checkbox" checked={st.require_signing} onChange={(e) => void toggle(e.target.checked)} style={{ width: "auto" }} />
+              </label>
+              <div className="spread" style={{ marginBottom: 10 }}>
+                <span className="label">Signing secret · v{st.version}</span>
+                <div className="row" style={{ gap: 8 }}>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setReveal((r) => !r)}>{reveal ? "Hide" : "Reveal"}</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => st.secret && void navigator.clipboard?.writeText(st.secret)}>Copy</button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setConfirmRotate(true)}>Rotate</button>
+                </div>
               </div>
-            </div>
-            {reveal && st.secret && (
-              <code className="muted-code" style={{ display: "block", wordBreak: "break-all" }}>{st.secret}</code>
-            )}
-          </>
-        )}
+              {reveal && st.secret && <code className="secret">{st.secret}</code>}
+            </>
+          )}
+        </div>
       </div>
       {confirmRotate && (
         <ConfirmDialog
@@ -474,33 +507,37 @@ function BoardCreator({ appId, onCreated }: { appId: string; onCreated: () => vo
 
   return (
     <form className="panel" onSubmit={submit}>
-      <div className="eyebrow" style={{ marginBottom: 14 }}>NEW BOARD</div>
-      {err && <div className="notice err">{err}</div>}
-      <Field label="Board id" value={board} onChange={(e) => setBoard(e.target.value)} placeholder="high_scores" required />
-      <div className="grid2">
-        <label className="field">
-          <span>Order</span>
-          <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}>
-            <option value="desc">Higher wins</option>
-            <option value="asc">Lower wins</option>
-          </select>
-        </label>
-        <label className="field">
-          <span>Update</span>
-          <select value={updatePolicy} onChange={(e) => setUpdatePolicy(e.target.value)}>
-            <option value="best">Best</option>
-            <option value="last">Last</option>
-            <option value="increment">Increment</option>
-          </select>
-        </label>
+      <div className="panel-head">
+        <span className="label">New board</span>
       </div>
-      <label className="row" style={{ gap: 8, marginBottom: 14, cursor: "pointer" }}>
-        <input type="checkbox" checked={daily} onChange={(e) => setDaily(e.target.checked)} style={{ width: "auto" }} />
-        <span className="dim" style={{ fontSize: 13 }}>Add a daily window</span>
-      </label>
-      <button className="btn" type="submit" disabled={busy} style={{ width: "100%", justifyContent: "center" }}>
-        {busy ? "…" : "Create board"}
-      </button>
+      <div className="panel-body">
+        {err && <div className="notice notice-alarm" style={{ marginBottom: 12 }}>{err}</div>}
+        <Field label="Board id" value={board} onChange={(e) => setBoard(e.target.value)} placeholder="high_scores" required />
+        <div className="pair">
+          <label className="field">
+            <span>Order</span>
+            <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}>
+              <option value="desc">Higher wins</option>
+              <option value="asc">Lower wins</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Update</span>
+            <select value={updatePolicy} onChange={(e) => setUpdatePolicy(e.target.value)}>
+              <option value="best">Best</option>
+              <option value="last">Last</option>
+              <option value="increment">Increment</option>
+            </select>
+          </label>
+        </div>
+        <label className="row" style={{ gap: 9, marginBottom: 16, cursor: "pointer" }}>
+          <input type="checkbox" checked={daily} onChange={(e) => setDaily(e.target.checked)} style={{ width: "auto" }} />
+          <span className="dim" style={{ fontSize: 13.5 }}>Also keep a daily window</span>
+        </label>
+        <button className="btn btn-wide" type="submit" disabled={busy}>
+          {busy ? "Creating…" : "Create board"}
+        </button>
+      </div>
     </form>
   );
 }
@@ -547,13 +584,14 @@ function Viewer({ appId, board, windows, onPlayersChanged }: { appId: string; bo
   const [segOpts, setSegOpts] = useState<string[]>([]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // The looked-up player, plotted on the board's full extent by PositionRule.
+  const [found, setFound] = useState<RankEntry | null>(null);
   const [confirmState, setConfirmState] = useState<{
     title: string;
     body: string;
     label: string;
     onYes: () => Promise<void>;
   } | null>(null);
-  const danger = { borderColor: "var(--danger)", color: "var(--danger)" };
   const loadTopReq = useRef(0);
 
   // The server answers removal_queued when the removal is durably logged but
@@ -585,6 +623,7 @@ function Viewer({ appId, board, windows, onPlayersChanged }: { appId: string; bo
       onYes: async () => {
         await api.deleteUser(appId, member);
         onPlayersChanged();
+        setFound(null);
         await loadTop();
       },
     });
@@ -617,43 +656,126 @@ function Viewer({ appId, board, windows, onPlayersChanged }: { appId: string; bo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId, board]);
 
+  // A found rank belongs to the window/segment it was read in — drop it when
+  // either changes, rather than plotting it against a different board extent.
+  useEffect(() => {
+    setFound(null);
+  }, [win, seg]);
+
+  const scope = `${win !== "all" ? (opts.find((o) => o.value === win)?.label ?? win) : "All-time"}${seg ? ` · ${seg}` : ""}`;
+
   return (
-    <div className="stack-sm">
-      <div className="spread">
-        <h3 className="mono" style={{ fontSize: 18 }}>{board}</h3>
-        <div className="row" style={{ gap: 8 }}>
-          {/* Window accepts a keyword (daily/weekly/monthly resolve to the CURRENT
-              bucket) or a literal bucket id like d=2026-06-17 to view a past period. */}
-          <input
-            list={`win-${board}`}
-            value={win}
-            onChange={(e) => setWin(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void loadTop(); }}
-            placeholder="all"
-            title="Window: a keyword (daily/weekly/monthly) or a bucket id like d=2026-06-17"
-            style={{ width: 120 }}
-          />
-          <datalist id={`win-${board}`}>
-            {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </datalist>
-          <input
-            list={`seg-${board}`}
-            value={seg}
-            onChange={(e) => setSeg(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void loadTop(); }}
-            placeholder="all segments"
-            title="Segment filter, e.g. region=eu (blank = all)"
-            style={{ width: 130 }}
-          />
-          <datalist id={`seg-${board}`}>
-            {segOpts.map((s) => <option key={s} value={s} />)}
-          </datalist>
-          <button className="btn btn-ghost btn-sm" onClick={() => void loadTop()}>Refresh</button>
+    <div className="stack">
+      {/* the board */}
+      <div className="panel">
+        <div className="panel-head">
+          <span className="mono" style={{ fontSize: 15, color: "var(--signal)" }}>{board}</span>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {/* Window accepts a keyword (daily/weekly/monthly resolve to the CURRENT
+                bucket) or a literal bucket id like d=2026-06-17 to view a past period. */}
+            <input
+              list={`win-${board}`}
+              value={win}
+              onChange={(e) => setWin(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void loadTop(); }}
+              placeholder="all"
+              title="Window: a keyword (daily/weekly/monthly) or a bucket id like d=2026-06-17"
+              style={{ width: 118 }}
+            />
+            <datalist id={`win-${board}`}>
+              {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </datalist>
+            <input
+              list={`seg-${board}`}
+              value={seg}
+              onChange={(e) => setSeg(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void loadTop(); }}
+              placeholder="all segments"
+              title="Segment filter, e.g. region=eu (blank = all)"
+              style={{ width: 152 }}
+            />
+            <datalist id={`seg-${board}`}>
+              {segOpts.map((s) => <option key={s} value={s} />)}
+            </datalist>
+            <button className="btn btn-ghost btn-sm" onClick={() => void loadTop()}>Refresh</button>
+          </div>
+        </div>
+
+        <div className="panel-head">
+          <span className="label">
+            Top {entries.length}{count !== null && count > entries.length ? ` of ${count.toLocaleString()}` : ""}
+          </span>
+          <span className="label">{scope}</span>
+        </div>
+
+        {err && <div className="panel-body"><div className="notice notice-alarm">{err}</div></div>}
+        {entries.length === 0 && !err && (
+          <div className="panel-body dim" style={{ fontSize: 14 }}>
+            Nothing in this window yet. Submit a score below and it appears within milliseconds.
+          </div>
+        )}
+        {entries.length > 0 && (
+          <div className="tablewrap">
+          <table className="lb">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Player</th>
+                <th style={{ textAlign: "right" }}>Score</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {entries.map((e) => (
+                <tr key={e.member}>
+                  <td className="rank">{String(e.rank).padStart(2, "0")}</td>
+                  <td>
+                    {e.nickname
+                      ? <>{e.nickname} <span className="mono" style={{ fontSize: 12, color: "var(--steel-2)" }}>{e.member}</span></>
+                      : <span className="mono">{e.member}</span>}
+                  </td>
+                  <td className="score">{e.score.toLocaleString()}</td>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    <button
+                      className="btn btn-danger-quiet btn-sm"
+                      title="Remove this entry from every window and segment of this board"
+                      onClick={() => askRemoveEntry(e)}
+                    >
+                      Remove
+                    </button>{" "}
+                    <button
+                      className="btn btn-danger-quiet btn-sm"
+                      title="Delete this player: all scores on all boards, nickname released"
+                      onClick={() => askDeletePlayer(e.member, e.nickname)}
+                    >
+                      Delete player
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        )}
+        <div className="panel-foot">
+          <p className="caption">
+            Window and segment apply on Enter or Refresh. Keyword windows show the current bucket —
+            type a bucket id such as d=2026-06-17 to read a past one.
+          </p>
         </div>
       </div>
-      <p className="dim" style={{ fontSize: 12, margin: "-4px 0 0" }}>
-        Window/segment apply on Enter or Refresh. Keyword windows (daily/weekly/monthly) show the current bucket — type a bucket id (e.g. <span className="mono">d=2026-06-17</span>) to view a past one.
-      </p>
+
+      <RankSearch
+        appId={appId}
+        board={board}
+        window={win}
+        segment={seg}
+        scope={scope}
+        total={count}
+        found={found}
+        onFound={setFound}
+        onDeletePlayer={askDeletePlayer}
+      />
 
       <TestSubmit
         appId={appId}
@@ -677,51 +799,6 @@ function Viewer({ appId, board, windows, onPlayersChanged }: { appId: string; bo
         }}
       />
 
-      <RankSearch appId={appId} board={board} window={win} segment={seg} onDeletePlayer={askDeletePlayer} />
-
-      <div className="panel" style={{ padding: 0 }}>
-        <div className="eyebrow" style={{ padding: "14px 18px", borderBottom: "1px solid var(--line)" }}>
-          TOP {entries.length}{count !== null && count > entries.length ? ` OF ${count.toLocaleString()}` : ""}{win !== "all" ? ` · ${opts.find((o) => o.value === win)?.label ?? win}` : ""}{seg ? ` · ${seg}` : ""}
-        </div>
-        {err && <div className="notice err" style={{ margin: 16 }}>{err}</div>}
-        {entries.length === 0 && !err && <div className="dim" style={{ padding: 18, fontSize: 14 }}>No entries in this window yet — submit a score above.</div>}
-        {entries.length > 0 && (
-          <table className="lb">
-            <thead><tr><th>Rank</th><th>Player</th><th style={{ textAlign: "right" }}>Score</th><th /></tr></thead>
-            <tbody>
-              {entries.map((e) => (
-                <tr key={e.member}>
-                  <td className="rank">{String(e.rank).padStart(2, "0")}</td>
-                  <td>
-                    {e.nickname
-                      ? <>{e.nickname} <span className="dim mono" style={{ fontSize: 12 }}>{e.member}</span></>
-                      : <span className="mono">{e.member}</span>}
-                  </td>
-                  <td className="score">{e.score.toLocaleString()}</td>
-                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      style={danger}
-                      title="Remove this entry from every window/segment of this board"
-                      onClick={() => askRemoveEntry(e)}
-                    >
-                      Remove
-                    </button>{" "}
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      style={danger}
-                      title="Delete this player: all scores on all boards, nickname released"
-                      onClick={() => askDeletePlayer(e.member, e.nickname)}
-                    >
-                      Delete player
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
       {confirmState && (
         <ConfirmDialog
           title={confirmState.title}
@@ -766,85 +843,129 @@ function TestSubmit({ appId, board, segment, busy, onRegistered, onSubmit }: { a
   }
 
   return (
-    <div className="stack-sm">
-      <form
-        className="panel row collapse"
-        style={{ gap: 10, alignItems: "flex-end" }}
-        onSubmit={(e) => { e.preventDefault(); if (member && score !== "") onSubmit(member, Number(score)); }}
-      >
-        <label className="field" style={{ margin: 0, flex: 1 }}>
-          <span>Member</span>
-          <input value={member} onChange={(e) => setMember(e.target.value)} placeholder="player-1 or plr_…" />
-        </label>
-        <label className="field" style={{ margin: 0, width: 130 }}>
-          <span>Score</span>
-          <input value={score} onChange={(e) => setScore(e.target.value)} placeholder="1500" type="number" />
-        </label>
-        <button className="btn" type="submit" disabled={busy} title={`Submit to ${dest}`}>{busy ? "…" : "Submit"}</button>
-      </form>
-      <form
-        className="panel row collapse"
-        style={{ gap: 10, alignItems: "flex-end" }}
-        onSubmit={(e) => { e.preventDefault(); void register(); }}
-      >
-        <label className="field" style={{ margin: 0, flex: 1 }}>
-          <span>Register a player (nickname → member id)</span>
-          <input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="Ninja" />
-        </label>
-        <button className="btn btn-ghost" type="submit">Register</button>
-        <div className="mono dim" style={{ minWidth: 150, textAlign: "right", fontSize: 12 }}>{regMsg}</div>
-      </form>
+    <div className="panel">
+      <div className="panel-head">
+        <span className="label">Test submit</span>
+        <span className="label">{dest}</span>
+      </div>
+      <div className="panel-body">
+        <form
+          className="row collapse"
+          style={{ gap: 10, alignItems: "flex-end" }}
+          onSubmit={(e) => { e.preventDefault(); if (member && score !== "") onSubmit(member, Number(score)); }}
+        >
+          <label className="field" style={{ margin: 0, flex: 1 }}>
+            <span>Member</span>
+            <input value={member} onChange={(e) => setMember(e.target.value)} placeholder="player-1 or plr_…" />
+          </label>
+          <label className="field" style={{ margin: 0, width: 130 }}>
+            <span>Score</span>
+            <input value={score} onChange={(e) => setScore(e.target.value)} placeholder="1500" type="number" />
+          </label>
+          <button className="btn" type="submit" disabled={busy} title={`Submit to ${dest}`}>
+            {busy ? "Submitting…" : "Submit score"}
+          </button>
+        </form>
+
+        <form
+          className="row collapse"
+          style={{ gap: 10, alignItems: "flex-end", marginTop: 14, paddingTop: 16, borderTop: "1px solid var(--etch)" }}
+          onSubmit={(e) => { e.preventDefault(); void register(); }}
+        >
+          <label className="field" style={{ margin: 0, flex: 1 }}>
+            <span>Register a player — nickname becomes a member id</span>
+            <input value={nickname} onChange={(e) => setNickname(e.target.value)} placeholder="Ninja" />
+          </label>
+          <button className="btn btn-ghost" type="submit">Register</button>
+          <div className="mono dim" style={{ minWidth: 160, textAlign: "right", fontSize: 12 }}>{regMsg}</div>
+        </form>
+      </div>
     </div>
   );
 }
 
-function RankSearch({ appId, board, window, segment, onDeletePlayer }: { appId: string; board: string; window: string; segment: string; onDeletePlayer?: (member: string, nickname?: string) => void }) {
+// The signature element, put to work: a looked-up player's place inside the
+// whole board, drawn against the same window/segment the count came from.
+function RankSearch({
+  appId,
+  board,
+  window: win,
+  segment,
+  scope,
+  total,
+  found,
+  onFound,
+  onDeletePlayer,
+}: {
+  appId: string;
+  board: string;
+  window: string;
+  segment: string;
+  scope: string;
+  total: number | null;
+  found: RankEntry | null;
+  onFound: (e: RankEntry | null) => void;
+  onDeletePlayer?: (member: string, nickname?: string) => void;
+}) {
   const [member, setMember] = useState("");
-  const [result, setResult] = useState<RankEntry | null>(null);
   const [msg, setMsg] = useState("");
 
   async function search(e: FormEvent) {
     e.preventDefault();
-    setResult(null);
+    onFound(null);
     setMsg("");
     try {
-      setResult(await api.rank(appId, board, member, { window, segment: segment || undefined }));
+      onFound(await api.rank(appId, board, member, { window: win, segment: segment || undefined }));
     } catch (e) {
-      setMsg((e as ApiError).status === 404 ? "Not in this window/segment." : (e as ApiError).message);
+      setMsg((e as ApiError).status === 404 ? "Not in this window or segment." : (e as ApiError).message);
     }
   }
 
   return (
-    <form className="panel row collapse" style={{ gap: 10, alignItems: "flex-end" }} onSubmit={search}>
-      <label className="field" style={{ margin: 0, flex: 1 }}>
-        <span>Look up a player’s rank</span>
-        <input value={member} onChange={(e) => setMember(e.target.value)} placeholder="player-1" />
-      </label>
-      <button className="btn btn-ghost" type="submit">Find rank</button>
-      <div className="mono" style={{ minWidth: 150, textAlign: "right", fontSize: 14 }}>
-        {result ? (
-          <span>
-            {result.nickname ? `${result.nickname} · ` : ""}
-            <span className="accent">#{result.rank}</span> · {result.score.toLocaleString()}
-            {onDeletePlayer && (
-              <>
-                {" "}
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  style={{ borderColor: "var(--danger)", color: "var(--danger)" }}
-                  title="Delete this player: all scores on all boards, nickname released"
-                  onClick={() => onDeletePlayer(result.member, result.nickname)}
-                >
-                  Delete
-                </button>
-              </>
-            )}
-          </span>
-        ) : (
-          <span className="dim">{msg}</span>
-        )}
+    <div className="panel">
+      <div className="panel-head">
+        <span className="label">Look up a rank</span>
+        <span className="label">{found ? (found.exact ? "Exact" : "Approximate") : scope}</span>
       </div>
-    </form>
+      <div className="panel-body">
+        <form className="row collapse" style={{ gap: 10, alignItems: "flex-end" }} onSubmit={search}>
+          <label className="field" style={{ margin: 0, flex: 1 }}>
+            <span>Member or player id</span>
+            <input value={member} onChange={(e) => setMember(e.target.value)} placeholder="player-1" />
+          </label>
+          <button className="btn btn-ghost" type="submit">Find rank</button>
+          {found && onDeletePlayer && (
+            <button
+              type="button"
+              className="btn btn-danger-quiet"
+              title="Delete this player: all scores on all boards, nickname released"
+              onClick={() => onDeletePlayer(found.member, found.nickname)}
+            >
+              Delete player
+            </button>
+          )}
+        </form>
+
+        <div style={{ marginTop: 20 }}>
+          <PositionRule
+            rank={found ? found.rank : null}
+            /* The board's extent is drawn before any lookup — only the tick is
+               waiting on one. */
+            total={total}
+            exact={found ? found.exact : true}
+            who={found ? <span className="mono">{found.nickname ?? found.member}</span> : undefined}
+            stamp={
+              found ? (
+                <span className="num" style={{ fontSize: 12, color: "var(--steel)" }}>
+                  {found.score.toLocaleString()} pts
+                </span>
+              ) : (
+                <span className="label">{msg || "No lookup yet"}</span>
+              )
+            }
+          />
+        </div>
+      </div>
+    </div>
   );
 }
