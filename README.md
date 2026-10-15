@@ -159,11 +159,39 @@ Registration can also **claim an existing anonymous member id** (`{"nickname":
 all of that member's existing board rows — the one-call upgrade path for games
 that submit under per-install anonymous ids. Claimed ids can't use the
 reserved server-minted `plr_` prefix; conflicts return distinct codes
-(`member_taken` vs `nickname_taken`). Trust caveat: the API key is the only
-data-plane credential, so any client holding it can claim a nickname for any
-raw member id — the same trust level as unsigned score submits. If that
-matters for your app, enable HMAC signing and proxy registration through your
-backend.
+(`member_taken` vs `nickname_taken`). Trust caveat: an API key alone doesn't
+tie a member id to a device, so any client holding one can claim a nickname
+for any raw member id — the same trust level as unsigned score submits. Use
+player tokens (below) to close that gap.
+
+**Key scopes.** Each API key is either `secret` or `publishable`. Publishable
+keys are meant to ship inside game clients; secret keys stay on your backend.
+`POST /v1/boards` (create a board) and `DELETE /v1/boards/{board}/scores/{member}`
+are secret-only: a publishable key gets `403 secret_key_required`. Dashboard
+sessions pass.
+
+**Player tokens.** A client generates a random token (32–128 chars of
+`[0-9a-zA-Z_-]`) once per install and sends it as `X-Player-Token` on score
+submits and on user create / rename / delete. The first request for a member
+id binds that token to it (stored as a sha256 hash, `ply:tok:{app}:{member}`,
+no TTL); after that only the same token may act on that member. Errors:
+`400 invalid_player_token` (malformed), `403 player_token_mismatch` (wrong
+token for the member), `401 player_token_required` (see the switch below).
+A token that is sent is always checked, whatever the key scope. Without a
+token, secret keys and dashboard sessions pass; publishable keys pass only
+while the app's switch is off. Bindings are never deleted, even when the
+player is deleted, so a freed id can't be squatted by someone else.
+
+**Require player tokens** is a per-app switch (dashboard, or `GET`/`PUT
+/v1/apps/{id}/player-tokens` with `require_player_tokens`). It defaults to
+off, so existing apps keep working. Rollout order:
+
+1. Deploy the server and dashboard.
+2. Issue a publishable key and ship clients that use it and send `X-Player-Token`
+   (TypeScript SDK 0.7.0+).
+3. Wait until most players have updated.
+4. Turn on *Require signed submissions* and *Require player tokens*.
+5. Revoke the old secret keys that are baked into old client builds.
 
 **Two auth planes** on the data plane (`/v1/boards/*` and `/v1/users*`): game clients use `Authorization: Bearer
 <api-key>` (or `X-API-Key`); the dashboard uses its session cookie plus an
