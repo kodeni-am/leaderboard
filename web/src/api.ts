@@ -15,6 +15,7 @@ export interface AppInfo {
 export interface KeyInfo {
   id: string;
   prefix: string;
+  scope?: "secret" | "publishable";
   created_at?: string;
 }
 export interface SigningState {
@@ -115,7 +116,11 @@ export const api = {
   createApp: (name: string) => req<{ id: string; name: string; api_key: string }>("POST", "/v1/apps", { name }),
   deleteApp: (appId: string) => req<unknown>("DELETE", `/v1/apps/${appId}`),
   listKeys: (appId: string) => req<{ keys: KeyInfo[] }>("GET", `/v1/apps/${appId}/keys`),
-  issueKey: (appId: string) => req<{ id: string; prefix: string; api_key: string }>("POST", `/v1/apps/${appId}/keys`),
+  issueKey: (appId: string, scope: "secret" | "publishable" = "secret") =>
+    req<{ id: string; prefix: string; api_key: string; scope: string }>("POST", `/v1/apps/${appId}/keys`, { scope }),
+  getPlayerTokens: (appId: string) => req<{ require_player_tokens: boolean }>("GET", `/v1/apps/${appId}/player-tokens`),
+  setPlayerTokens: (appId: string, require: boolean) =>
+    req<{ require_player_tokens: boolean }>("PUT", `/v1/apps/${appId}/player-tokens`, { require_player_tokens: require }),
   revokeKey: (appId: string, keyId: string) => req<unknown>("DELETE", `/v1/apps/${appId}/keys/${keyId}`),
 
   getSigning: (appId: string) => req<SigningState>("GET", `/v1/apps/${appId}/signing`),

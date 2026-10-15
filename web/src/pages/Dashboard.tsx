@@ -252,6 +252,7 @@ function AppWorkspace({ appId, onAppDeleted, onPlayersChanged }: { appId: string
         <BoardCreator appId={appId} onCreated={loadBoards} />
         <AppKeys appId={appId} onDeleted={onAppDeleted} />
         <AppSigning appId={appId} />
+        <AppPlayerTokens appId={appId} />
       </div>
       <div>
         {board ? (
@@ -317,9 +318,9 @@ function AppKeys({ appId, onDeleted }: { appId: string; onDeleted: () => void })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId]);
 
-  async function issue() {
+  async function issue(scope: "secret" | "publishable") {
     try {
-      const r = await api.issueKey(appId);
+      const r = await api.issueKey(appId, scope);
       setNewKey(r.api_key);
       await load();
     } catch (e) {
@@ -356,10 +357,17 @@ function AppKeys({ appId, onDeleted }: { appId: string; onDeleted: () => void })
       <div className="panel">
         <div className="panel-head">
           <span className="label">API keys · {keys.length}</span>
-          <button className="btn btn-sm" onClick={() => void issue()}>New key</button>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn btn-sm" onClick={() => void issue("secret")}>New secret key</button>
+            <button className="btn btn-sm" onClick={() => void issue("publishable")}>New publishable key</button>
+          </div>
         </div>
         <div className="panel-body">
           <div className="stack-tight">
+            <p className="dim" style={{ fontSize: 13.5 }}>
+              Publishable keys go in game builds: reads and player writes only, each guarded by the player's token.
+              Secret keys can create boards and moderate; keep them on servers.
+            </p>
             {err && <div className="notice notice-alarm">{err}</div>}
             {newKey && (
               <div className="notice notice-attn">
@@ -370,7 +378,10 @@ function AppKeys({ appId, onDeleted }: { appId: string; onDeleted: () => void })
             )}
             {keys.map((k) => (
               <div key={k.id} className="spread" style={{ fontSize: 13 }}>
-                <code className="mono">{k.prefix}</code>
+                <span className="row" style={{ gap: 10 }}>
+                  <code className="mono">{k.prefix}</code>
+                  <span className="label dim">{k.scope === "publishable" ? "publishable · ship in clients" : "secret · servers only"}</span>
+                </span>
                 <button className="btn btn-danger-quiet btn-sm" onClick={() => askRevoke(k)}>Revoke</button>
               </div>
             ))}
@@ -499,6 +510,58 @@ function AppSigning({ appId }: { appId: string }) {
         />
       )}
     </>
+  );
+}
+
+function AppPlayerTokens({ appId }: { appId: string }) {
+  const [st, setSt] = useState<{ require_player_tokens: boolean } | null>(null);
+  const [err, setErr] = useState("");
+
+  async function load() {
+    try {
+      setSt(await api.getPlayerTokens(appId));
+    } catch (e) {
+      setErr((e as ApiError).message);
+    }
+  }
+  useEffect(() => {
+    setErr("");
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId]);
+
+  async function toggle(v: boolean) {
+    try {
+      setSt(await api.setPlayerTokens(appId, v));
+      setErr("");
+    } catch (e) {
+      setErr((e as ApiError).message);
+    }
+  }
+
+  if (!st) return null;
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <span className="label">Require player tokens</span>
+        <span className="row label" style={{ gap: 7 }}>
+          {st.require_player_tokens && <span className="lamp-dot" />}
+          {st.require_player_tokens ? "Required" : "Off"}
+        </span>
+      </div>
+      <div className="panel-body">
+        {err && <div className="notice notice-alarm" style={{ marginBottom: 12 }}>{err}</div>}
+        <p className="dim" style={{ fontSize: 13.5, marginBottom: 14 }}>
+          Publishable-key writes for a player (score submits, nickname claim, rename, delete) must carry that player's
+          token. Turn on once most players run a build that sends tokens; older builds can still read.
+        </p>
+        <label className="spread" style={{ fontSize: 14, cursor: "pointer" }}>
+          <span>Require player tokens</span>
+          <input type="checkbox" checked={st.require_player_tokens} onChange={(e) => void toggle(e.target.checked)} style={{ width: "auto" }} />
+        </label>
+      </div>
+    </div>
   );
 }
 
