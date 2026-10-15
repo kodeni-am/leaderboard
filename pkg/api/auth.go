@@ -337,7 +337,7 @@ func (s *Server) handleIssueKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	plain, key, err := s.store.IssueKey(r.Context(), app.ID)
+	plain, key, err := s.store.IssueKey(r.Context(), app.ID, tenancy.ScopeSecret)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

@@ -18,6 +18,35 @@ var (
 	ErrKeyNotFound   = errors.New("tenancy: api key not found")
 )
 
+// KeyScope limits what an API key may do. Secret keys (the default, and every
+// key issued before scopes existed) may call the whole data plane. Publishable
+// keys are meant to ship in game clients: reads plus player-scoped writes,
+// which are guarded by player tokens (pkg/players), never admin routes.
+type KeyScope string
+
+const (
+	ScopeSecret      KeyScope = "secret"
+	ScopePublishable KeyScope = "publishable"
+)
+
+// ParseScope maps an API/dashboard value to a scope; "" means secret.
+func ParseScope(s string) (KeyScope, bool) {
+	switch KeyScope(s) {
+	case "", ScopeSecret:
+		return ScopeSecret, true
+	case ScopePublishable:
+		return ScopePublishable, true
+	}
+	return "", false
+}
+
+func normScope(s KeyScope) KeyScope {
+	if s == "" {
+		return ScopeSecret
+	}
+	return s
+}
+
 // APIKey is the non-secret metadata for an issued key. The secret itself is
 // only ever returned once (at issue time); only a hash is stored. Prefix is a
 // masked identifier for display, e.g. "lb_3f9c…a1b2".
@@ -25,6 +54,7 @@ type APIKey struct {
 	ID        string    `json:"id"`
 	AppID     string    `json:"app_id"`
 	Prefix    string    `json:"prefix"`
+	Scope     KeyScope  `json:"scope"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -57,10 +87,12 @@ type Store interface {
 	// AppByKey authenticates a plaintext API key to its owning tenant.
 	AppByKey(ctx context.Context, plaintextKey string) (App, error)
 
-	// IssueKey mints an additional API key for an app (zero-downtime rotation:
+	// IssueKey mints an additional API key with the given scope for an app (zero-downtime rotation:
 	// add a new key, migrate clients, then revoke the old). Returns the
 	// one-time plaintext key plus its metadata.
-	IssueKey(ctx context.Context, appID string) (plaintext string, key APIKey, err error)
+	IssueKey(ctx context.Context, appID string, scope KeyScope) (plaintext string, key APIKey, err error)
+	// AuthKey authenticates a plaintext key to its tenant and scope.
+	AuthKey(ctx context.Context, plaintextKey string) (App, KeyScope, error)
 	// ListKeys returns the non-secret metadata for an app's keys.
 	ListKeys(ctx context.Context, appID string) ([]APIKey, error)
 	// RevokeKey invalidates a single key by id (must belong to appID).

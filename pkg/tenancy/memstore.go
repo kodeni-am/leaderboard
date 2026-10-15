@@ -15,6 +15,7 @@ type MemStore struct {
 	keyIndex map[string]string              // keyHash -> appID (auth lookup)
 	keyMeta  map[string]APIKey              // keyID -> metadata
 	keyHash  map[string]string              // keyID -> keyHash
+	keyScope map[string]KeyScope            // keyHash -> scope
 	appKeys  map[string]map[string]struct{} // appID -> set of keyIDs
 	boards   map[string]map[string]engine.LogicalBoard
 	now      func() time.Time
@@ -26,6 +27,7 @@ func NewMemStore() *MemStore {
 		keyIndex: map[string]string{},
 		keyMeta:  map[string]APIKey{},
 		keyHash:  map[string]string{},
+		keyScope: map[string]KeyScope{},
 		appKeys:  map[string]map[string]struct{}{},
 		boards:   map[string]map[string]engine.LogicalBoard{},
 		now:      func() time.Time { return time.Now().UTC() },
@@ -43,14 +45,14 @@ func (s *MemStore) CreateApp(ctx context.Context, ownerUserID, name string) (App
 	s.boards[id] = map[string]engine.LogicalBoard{}
 	s.appKeys[id] = map[string]struct{}{}
 	s.mu.Unlock()
-	plain, _, err := s.IssueKey(ctx, id)
+	plain, _, err := s.IssueKey(ctx, id, ScopeSecret)
 	if err != nil {
 		return App{}, "", err
 	}
 	return app, plain, nil
 }
 
-func (s *MemStore) IssueKey(_ context.Context, appID string) (string, APIKey, error) {
+func (s *MemStore) IssueKey(_ context.Context, appID string, scope KeyScope) (string, APIKey, error) {
 	plain, hash, err := newAPIKey()
 	if err != nil {
 		return "", APIKey{}, err
@@ -64,9 +66,10 @@ func (s *MemStore) IssueKey(_ context.Context, appID string) (string, APIKey, er
 	if _, ok := s.apps[appID]; !ok {
 		return "", APIKey{}, ErrAppNotFound
 	}
-	k := APIKey{ID: keyID, AppID: appID, Prefix: keyPrefix(plain), CreatedAt: s.now()}
+	k := APIKey{ID: keyID, AppID: appID, Prefix: keyPrefix(plain), Scope: normScope(scope), CreatedAt: s.now()}
 	s.keyIndex[hash] = appID
 	s.keyMeta[keyID] = k
+	s.keyScope[hash] = k.Scope
 	s.keyHash[keyID] = hash
 	if s.appKeys[appID] == nil {
 		s.appKeys[appID] = map[string]struct{}{}
@@ -95,6 +98,7 @@ func (s *MemStore) RevokeKey(_ context.Context, appID, keyID string) error {
 		return ErrKeyNotFound
 	}
 	delete(s.keyIndex, s.keyHash[keyID])
+	delete(s.keyScope, s.keyHash[keyID])
 	delete(s.keyHash, keyID)
 	delete(s.keyMeta, keyID)
 	delete(s.appKeys[appID], keyID)
@@ -109,6 +113,7 @@ func (s *MemStore) DeleteApp(_ context.Context, appID string) error {
 	}
 	for keyID := range s.appKeys[appID] {
 		delete(s.keyIndex, s.keyHash[keyID])
+		delete(s.keyScope, s.keyHash[keyID])
 		delete(s.keyHash, keyID)
 		delete(s.keyMeta, keyID)
 	}
@@ -170,14 +175,20 @@ func (s *MemStore) ListApps(_ context.Context, ownerUserID string) ([]App, error
 	return out, nil
 }
 
-func (s *MemStore) AppByKey(_ context.Context, plaintextKey string) (App, error) {
+func (s *MemStore) AppByKey(ctx context.Context, plaintextKey string) (App, error) {
+	app, _, err := s.AuthKey(ctx, plaintextKey)
+	return app, err
+}
+
+func (s *MemStore) AuthKey(_ context.Context, plaintextKey string) (App, KeyScope, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	id, ok := s.keyIndex[hashKey(plaintextKey)]
+	h := hashKey(plaintextKey)
+	id, ok := s.keyIndex[h]
 	if !ok {
-		return App{}, ErrInvalidKey
+		return App{}, "", ErrInvalidKey
 	}
-	return s.apps[id], nil
+	return s.apps[id], normScope(s.keyScope[h]), nil
 }
 
 func (s *MemStore) UpsertBoard(_ context.Context, lb engine.LogicalBoard) error {

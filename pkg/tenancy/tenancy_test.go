@@ -2,6 +2,7 @@ package tenancy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -85,7 +86,7 @@ func storeContract(t *testing.T, s Store) {
 		t.Errorf("key metadata missing prefix/appID: %+v", keys[0])
 	}
 	// Issue a second key; both keys authenticate (zero-downtime rotation).
-	plain2, k2, err := s.IssueKey(ctx, app.ID)
+	plain2, k2, err := s.IssueKey(ctx, app.ID, ScopeSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +153,51 @@ func storeContract(t *testing.T, s Store) {
 	}
 }
 
+// scopeContract exercises secret/publishable key scopes on a Store.
+func scopeContract(t *testing.T, s Store) App {
+	ctx := context.Background()
+	app, secretPlain, err := s.CreateApp(ctx, "usr_"+strconv.FormatInt(time.Now().UnixNano(), 36), "scoped")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, scope, err := s.AuthKey(ctx, secretPlain); err != nil || scope != ScopeSecret {
+		t.Fatalf("app's first key is secret: %v %v", scope, err)
+	}
+	pubPlain, pub, err := s.IssueKey(ctx, app.ID, ScopePublishable)
+	if err != nil || pub.Scope != ScopePublishable {
+		t.Fatalf("issue publishable: %+v %v", pub, err)
+	}
+	gotApp, scope, err := s.AuthKey(ctx, pubPlain)
+	if err != nil || scope != ScopePublishable || gotApp.ID != app.ID {
+		t.Fatalf("auth publishable: %v %v %v", gotApp.ID, scope, err)
+	}
+	keys, _ := s.ListKeys(ctx, app.ID)
+	seen := map[KeyScope]int{}
+	for _, k := range keys {
+		seen[k.Scope]++
+	}
+	if seen[ScopeSecret] != 1 || seen[ScopePublishable] != 1 {
+		t.Fatalf("list scopes: %+v", keys)
+	}
+	if err := s.RevokeKey(ctx, app.ID, pub.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AuthKey(ctx, pubPlain); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("revoked publishable must not auth: %v", err)
+	}
+	return app
+}
+
+func TestKeyScopes(t *testing.T) {
+	scopeContract(t, NewMemStore())
+	if _, ok := ParseScope(""); !ok {
+		t.Fatal(`"" parses (as secret)`)
+	}
+	if _, ok := ParseScope("admin"); ok {
+		t.Fatal("unknown scope must not parse")
+	}
+}
+
 func TestMemStoreContract(t *testing.T) {
 	storeContract(t, NewMemStore())
 }
@@ -169,6 +215,41 @@ func TestRedisStoreContract(t *testing.T) {
 	}
 	// Isolate: flush is too broad; this test uses unique random ids so it is safe.
 	storeContract(t, NewRedisStore(rdb))
+}
+
+func TestRedisKeyScopes(t *testing.T) {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		addr = "localhost:6379"
+	}
+	rdb := redis.NewUniversalClient(&redis.UniversalOptions{Addrs: []string{addr}})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		t.Skipf("redis not available: %v", err)
+	}
+	s := NewRedisStore(rdb)
+	app := scopeContract(t, s)
+
+	// legacy meta: written before scopes existed (no scope field)
+	data, _ := json.Marshal(map[string]string{"id": "key_legacy", "app_id": app.ID, "prefix": "lb_old…0000"})
+	rdb.Set(ctx, keyMetaKey("key_legacy"), data, 0)
+	rdb.SAdd(ctx, appKeysKey(app.ID), "key_legacy")
+	keys, _ := s.ListKeys(ctx, app.ID)
+	found := false
+	for _, k := range keys {
+		if k.ID == "key_legacy" {
+			found = true
+			if k.Scope != ScopeSecret {
+				t.Fatalf("legacy key lists as %q, want secret", k.Scope)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("legacy key not listed")
+	}
+	_ = s.DeleteApp(ctx, app.ID)
+	rdb.Del(ctx, keyMetaKey("key_legacy"))
 }
 
 func TestAuthMiddleware(t *testing.T) {

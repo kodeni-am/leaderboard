@@ -26,6 +26,7 @@ func boardSetKey(app string) string  { return "ten:boards:" + app }
 func appSetKey() string              { return "ten:apps" }
 func ownerAppsKey(uid string) string { return "ten:owner:" + uid }
 func keyMetaKey(keyID string) string { return "ten:keymeta:" + keyID }
+func keyScopeKey(hash string) string { return "ten:keyscope:" + hash }
 func keyHashKey(keyID string) string { return "ten:keyhash:" + keyID }
 func appKeysKey(appID string) string { return "ten:appkeys:" + appID }
 
@@ -45,14 +46,14 @@ func (s *RedisStore) CreateApp(ctx context.Context, ownerUserID, name string) (A
 	if _, err := pipe.Exec(ctx); err != nil {
 		return App{}, "", err
 	}
-	plain, _, err := s.IssueKey(ctx, id)
+	plain, _, err := s.IssueKey(ctx, id, ScopeSecret)
 	if err != nil {
 		return App{}, "", err
 	}
 	return app, plain, nil
 }
 
-func (s *RedisStore) IssueKey(ctx context.Context, appID string) (string, APIKey, error) {
+func (s *RedisStore) IssueKey(ctx context.Context, appID string, scope KeyScope) (string, APIKey, error) {
 	if _, err := s.GetApp(ctx, appID); err != nil {
 		return "", APIKey{}, err
 	}
@@ -64,10 +65,13 @@ func (s *RedisStore) IssueKey(ctx context.Context, appID string) (string, APIKey
 	if err != nil {
 		return "", APIKey{}, err
 	}
-	k := APIKey{ID: keyID, AppID: appID, Prefix: keyPrefix(plain), CreatedAt: time.Now().UTC()}
+	k := APIKey{ID: keyID, AppID: appID, Prefix: keyPrefix(plain), Scope: normScope(scope), CreatedAt: time.Now().UTC()}
 	meta, _ := json.Marshal(k)
 	pipe := s.rdb.TxPipeline()
 	pipe.Set(ctx, apiKeyKey(hash), appID, 0)
+	if k.Scope == ScopePublishable {
+		pipe.Set(ctx, keyScopeKey(hash), string(ScopePublishable), 0)
+	}
 	pipe.Set(ctx, keyMetaKey(keyID), meta, 0)
 	pipe.Set(ctx, keyHashKey(keyID), hash, 0)
 	pipe.SAdd(ctx, appKeysKey(appID), keyID)
@@ -95,6 +99,7 @@ func (s *RedisStore) ListKeys(ctx context.Context, appID string) ([]APIKey, erro
 		if err := json.Unmarshal(data, &k); err != nil {
 			return nil, err
 		}
+		k.Scope = normScope(k.Scope)
 		out = append(out, k)
 	}
 	return out, nil
@@ -122,6 +127,7 @@ func (s *RedisStore) RevokeKey(ctx context.Context, appID, keyID string) error {
 	pipe := s.rdb.TxPipeline()
 	if hash != "" {
 		pipe.Del(ctx, apiKeyKey(hash))
+		pipe.Del(ctx, keyScopeKey(hash))
 	}
 	pipe.Del(ctx, keyMetaKey(keyID))
 	pipe.Del(ctx, keyHashKey(keyID))
@@ -229,14 +235,32 @@ func (s *RedisStore) RotateSigningKey(ctx context.Context, appID string) (App, e
 }
 
 func (s *RedisStore) AppByKey(ctx context.Context, plaintextKey string) (App, error) {
-	id, err := s.rdb.Get(ctx, apiKeyKey(hashKey(plaintextKey))).Result()
+	app, _, err := s.AuthKey(ctx, plaintextKey)
+	return app, err
+}
+
+func (s *RedisStore) AuthKey(ctx context.Context, plaintextKey string) (App, KeyScope, error) {
+	h := hashKey(plaintextKey)
+	id, err := s.rdb.Get(ctx, apiKeyKey(h)).Result()
 	if err == redis.Nil {
-		return App{}, ErrInvalidKey
+		return App{}, "", ErrInvalidKey
 	}
 	if err != nil {
-		return App{}, err
+		return App{}, "", err
 	}
-	return s.GetApp(ctx, id)
+	scope := ScopeSecret
+	sc, err := s.rdb.Get(ctx, keyScopeKey(h)).Result()
+	if err != nil && err != redis.Nil {
+		return App{}, "", err
+	}
+	if err == nil {
+		scope = normScope(KeyScope(sc))
+	}
+	app, err := s.GetApp(ctx, id)
+	if err != nil {
+		return App{}, "", err
+	}
+	return app, scope, nil
 }
 
 func (s *RedisStore) UpsertBoard(ctx context.Context, lb engine.LogicalBoard) error {
