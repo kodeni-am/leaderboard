@@ -19,6 +19,7 @@ import (
 	"github.com/kodeni-am/leaderboard/pkg/email"
 	"github.com/kodeni-am/leaderboard/pkg/engine"
 	"github.com/kodeni-am/leaderboard/pkg/ingest"
+	"github.com/kodeni-am/leaderboard/pkg/players"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
 	"github.com/kodeni-am/leaderboard/pkg/users"
 	"github.com/kodeni-am/leaderboard/pkg/window"
@@ -108,6 +109,7 @@ func main() {
 	usrStore := users.NewRedisStore(rdb)
 
 	srv := api.NewServer(eng, ing, store, registry, acctSvc, secureCk, usrStore)
+	srv.SetPlayers(players.NewRedisStore(rdb))
 	if signingKey != "" {
 		srv.SetSigningMaster(signingKey, 5*time.Minute)
 		log.Print("per-app HMAC signing: AVAILABLE (apps opt in via require_signing)")

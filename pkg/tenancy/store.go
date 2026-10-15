@@ -70,6 +70,10 @@ type App struct {
 	// API-key-only auth. The signing secret is derived from the server master
 	// key — see trust.DeriveAppSecret — never stored here.
 	RequireSigning bool `json:"require_signing,omitempty"`
+	// RequirePlayerTokens makes publishable-key writes for a player carry that
+	// player's token (pkg/players). Off = migration window: tokens are bound
+	// and checked when sent, but not required.
+	RequirePlayerTokens bool `json:"require_player_tokens,omitempty"`
 	// SigningKeyVersion rotates the derived signing secret: bumping it changes
 	// the secret and invalidates signatures made with the prior one. Starts at 1.
 	SigningKeyVersion int `json:"signing_key_version,omitempty"`
@@ -103,6 +107,9 @@ type Store interface {
 	// SetRequireSigning toggles whether the app rejects unsigned submissions,
 	// returning the updated app.
 	SetRequireSigning(ctx context.Context, appID string, require bool) (App, error)
+	// SetRequirePlayerTokens toggles whether publishable-key player writes
+	// must carry a player token, returning the updated app.
+	SetRequirePlayerTokens(ctx context.Context, appID string, require bool) (App, error)
 	// RotateSigningKey bumps the app's signing key version (rotating its derived
 	// secret) and returns the updated app.
 	RotateSigningKey(ctx context.Context, appID string) (App, error)

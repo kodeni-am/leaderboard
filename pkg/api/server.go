@@ -17,6 +17,7 @@ import (
 	"github.com/kodeni-am/leaderboard/pkg/accounts"
 	"github.com/kodeni-am/leaderboard/pkg/engine"
 	"github.com/kodeni-am/leaderboard/pkg/ingest"
+	"github.com/kodeni-am/leaderboard/pkg/players"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
 	"github.com/kodeni-am/leaderboard/pkg/trust"
 	"github.com/kodeni-am/leaderboard/pkg/users"
@@ -33,6 +34,7 @@ type Server struct {
 	registry      *ingest.StaticRegistry
 	accounts      *accounts.Service
 	users         users.Store
+	players       players.Store
 	secureCookies bool            // set Secure on auth cookies (true behind TLS)
 	signingMaster string          // master key; per-app secrets derived from it. "" disables signing.
 	signingSkew   time.Duration   // allowed timestamp skew for signed submissions
@@ -113,7 +115,38 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 }
 
 func NewServer(eng engine.RankingEngine, ing *ingest.Ingestor, store tenancy.Store, registry *ingest.StaticRegistry, acct *accounts.Service, secureCookies bool, usrs users.Store) *Server {
-	return &Server{eng: eng, ing: ing, store: store, registry: registry, accounts: acct, secureCookies: secureCookies, users: usrs}
+	return &Server{eng: eng, ing: ing, store: store, registry: registry, accounts: acct, secureCookies: secureCookies, users: usrs, players: players.NewMemStore()}
+}
+
+// SetPlayers swaps the player-token store (cmd/leaderboardd wires Redis).
+func (s *Server) SetPlayers(p players.Store) { s.players = p }
+
+// authorizePlayer proves the caller may write as member. A token, when sent,
+// is always checked (bound on first use) — also for secret keys, which is how
+// a trusted backend passes a player's proof through. Without a token, secret
+// keys and dashboard sessions pass; publishable keys pass only while the app
+// has not turned on RequirePlayerTokens.
+func (s *Server) authorizePlayer(w http.ResponseWriter, r *http.Request, app tenancy.App, member string) bool {
+	token := strings.TrimSpace(r.Header.Get("X-Player-Token"))
+	if token == "" {
+		if keyScopeFrom(r.Context()) == tenancy.ScopeSecret || !app.RequirePlayerTokens {
+			return true
+		}
+		writeErr(w, http.StatusUnauthorized, "player_token_required")
+		return false
+	}
+	err := s.players.Authorize(r.Context(), app.ID, member, token)
+	switch {
+	case err == nil:
+		return true
+	case errors.Is(err, players.ErrInvalidToken):
+		writeErr(w, http.StatusBadRequest, "invalid_player_token")
+	case errors.Is(err, players.ErrTokenMismatch):
+		writeErr(w, http.StatusForbidden, "player_token_mismatch")
+	default:
+		writeErr(w, http.StatusInternalServerError, err.Error())
+	}
+	return false
 }
 
 // SetSigningMaster configures the master key from which per-app signing secrets
@@ -184,6 +217,8 @@ func (s *Server) Handler() http.Handler {
 	user("DELETE /v1/apps/{id}/keys/{keyId}", s.handleRevokeKey)
 	user("GET /v1/apps/{id}/signing", s.handleGetSigning)
 	user("PUT /v1/apps/{id}/signing", s.handleSetSigning)
+	user("GET /v1/apps/{id}/player-tokens", s.handleGetPlayerTokens)
+	user("PUT /v1/apps/{id}/player-tokens", s.handleSetPlayerTokens)
 	user("POST /v1/apps/{id}/signing/rotate", s.handleRotateSigning)
 	user("GET /v1/apps/{id}/stats", s.handleAppStats)
 
@@ -406,6 +441,9 @@ func (s *Server) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	var req submitReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Member == "" {
 		writeErr(w, http.StatusBadRequest, "member and score required")
+		return
+	}
+	if !s.authorizePlayer(w, r, app, req.Member) {
 		return
 	}
 	if app.RequireSigning {

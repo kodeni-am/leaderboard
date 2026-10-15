@@ -493,3 +493,31 @@ func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+func (s *Server) handleGetPlayerTokens(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.ownedApp(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"require_player_tokens": app.RequirePlayerTokens})
+}
+
+func (s *Server) handleSetPlayerTokens(w http.ResponseWriter, r *http.Request) {
+	app, ok := s.ownedApp(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		RequirePlayerTokens bool `json:"require_player_tokens"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	updated, err := s.store.SetRequirePlayerTokens(r.Context(), app.ID, req.RequirePlayerTokens)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"require_player_tokens": updated.RequirePlayerTokens})
+}

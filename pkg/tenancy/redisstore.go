@@ -216,6 +216,10 @@ func (s *RedisStore) mutateApp(ctx context.Context, appID string, fn func(*App))
 	return app, nil
 }
 
+func (s *RedisStore) SetRequirePlayerTokens(ctx context.Context, appID string, require bool) (App, error) {
+	return s.mutateApp(ctx, appID, func(a *App) { a.RequirePlayerTokens = require })
+}
+
 func (s *RedisStore) SetRequireSigning(ctx context.Context, appID string, require bool) (App, error) {
 	return s.mutateApp(ctx, appID, func(a *App) {
 		a.RequireSigning = require

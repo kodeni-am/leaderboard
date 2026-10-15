@@ -49,6 +49,9 @@ func (s *Server) handleRemoveScore(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	app, _ := tenancy.AppFromContext(r.Context())
 	member := r.PathValue("id")
+	if !s.authorizePlayer(w, r, app, member) {
+		return
+	}
 	boards, err := s.store.ListBoards(r.Context(), app.ID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())

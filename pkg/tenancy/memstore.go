@@ -123,6 +123,18 @@ func (s *MemStore) DeleteApp(_ context.Context, appID string) error {
 	return nil
 }
 
+func (s *MemStore) SetRequirePlayerTokens(_ context.Context, appID string, require bool) (App, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	app, ok := s.apps[appID]
+	if !ok {
+		return App{}, ErrAppNotFound
+	}
+	app.RequirePlayerTokens = require
+	s.apps[appID] = app
+	return app, nil
+}
+
 func (s *MemStore) SetRequireSigning(_ context.Context, appID string, require bool) (App, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
+	"github.com/kodeni-am/leaderboard/pkg/players"
 	"github.com/kodeni-am/leaderboard/pkg/tenancy"
 	"github.com/kodeni-am/leaderboard/pkg/users"
 )
@@ -44,13 +46,9 @@ func writeUserErr(w http.ResponseWriter, err error) {
 // handleCreateUser registers a player. With req.Member set it claims that
 // existing member id in place (user_id echoes it) instead of minting one.
 //
-// Trust model: the data plane is API-key authenticated, so ANY client holding
-// the key can claim a nickname for ANY raw member id — impersonation of
-// anonymous rows is possible by design. This is the same trust level as
-// unsigned score submits. TODO(trust): when an app opts into RequireSigning
-// (HMAC submit enforcement in handleSubmit, pkg/api/server.go), claims for an
-// explicit member must join it — require a valid signature proving control of
-// that member id.
+// Trust model: claims and minted ids are bound to the caller's player token
+// (pkg/players); with a publishable key and `RequirePlayerTokens` on, a token
+// is mandatory.
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	app, _ := tenancy.AppFromContext(r.Context())
 	var req userReq
@@ -58,10 +56,32 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "nickname required")
 		return
 	}
+	member := strings.TrimSpace(req.Member)
+	token := strings.TrimSpace(r.Header.Get("X-Player-Token"))
+	if member != "" {
+		// claiming an existing member: prove it is yours (binds on first use)
+		if !s.authorizePlayer(w, r, app, member) {
+			return
+		}
+	} else if token != "" && !players.ValidToken(token) {
+		// minting: reject a malformed token before creating anything
+		writeErr(w, http.StatusBadRequest, "invalid_player_token")
+		return
+	} else if token == "" && keyScopeFrom(r.Context()) != tenancy.ScopeSecret && app.RequirePlayerTokens {
+		writeErr(w, http.StatusUnauthorized, "player_token_required")
+		return
+	}
 	u, err := s.users.Create(r.Context(), app.ID, req.Nickname, req.Member)
 	if err != nil {
 		writeUserErr(w, err)
 		return
+	}
+	if member == "" && token != "" {
+		// a minted plr_ id is brand new: bind the creator's token to it
+		if err := s.players.Authorize(r.Context(), app.ID, u.ID, token); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusCreated, u)
 }
@@ -96,6 +116,9 @@ func (s *Server) handleRenameUser(w http.ResponseWriter, r *http.Request) {
 	var req userReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "nickname required")
+		return
+	}
+	if !s.authorizePlayer(w, r, app, r.PathValue("id")) {
 		return
 	}
 	u, err := s.users.Rename(r.Context(), app.ID, r.PathValue("id"), req.Nickname)
