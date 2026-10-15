@@ -3,6 +3,7 @@ package players
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -14,6 +15,8 @@ type RedisStore struct {
 }
 
 func NewRedisStore(rdb redis.UniversalClient) *RedisStore { return &RedisStore{rdb: rdb} }
+
+func countKey(app string) string { return "ply:count:" + app }
 
 func tokKey(app, member string) string { return "ply:tok:" + app + ":" + member }
 
@@ -28,6 +31,9 @@ func (s *RedisStore) Authorize(ctx context.Context, appID, member, token string)
 		return err
 	}
 	if bound {
+		// The binding is what matters; the counter only feeds the dashboard,
+		// so a failed INCR must not fail the request.
+		_ = s.rdb.Incr(ctx, countKey(appID)).Err()
 		return nil
 	}
 	cur, err := s.rdb.Get(ctx, k).Result()
@@ -38,4 +44,13 @@ func (s *RedisStore) Authorize(ctx context.Context, appID, member, token string)
 		return ErrTokenMismatch
 	}
 	return nil
+}
+
+// Bindings returns the number of bindings made since the counter existed.
+func (s *RedisStore) Bindings(ctx context.Context, appID string) (int64, error) {
+	n, err := s.rdb.Get(ctx, countKey(appID)).Int64()
+	if errors.Is(err, redis.Nil) {
+		return 0, nil
+	}
+	return n, err
 }

@@ -104,7 +104,7 @@ func (s *Server) withCORS(next http.Handler) http.Handler {
 		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
 			if active {
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, X-App-Id, X-CSRF-Token")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-API-Key, X-App-Id, X-CSRF-Token, X-Player-Token")
 				w.Header().Set("Access-Control-Max-Age", "600")
 			}
 			w.WriteHeader(http.StatusNoContent)

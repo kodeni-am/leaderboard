@@ -525,6 +525,9 @@ func TestCORS(t *testing.T) {
 	if !strings.Contains(resp.Header.Get("Access-Control-Allow-Headers"), "Authorization") {
 		t.Errorf("preflight missing Authorization in allowed headers: %q", resp.Header.Get("Access-Control-Allow-Headers"))
 	}
+	if !strings.Contains(resp.Header.Get("Access-Control-Allow-Headers"), "X-Player-Token") {
+		t.Errorf("preflight missing X-Player-Token in allowed headers: %q", resp.Header.Get("Access-Control-Allow-Headers"))
+	}
 
 	// Actual cross-origin GET carries the wildcard header on the response.
 	getReq, _ := http.NewRequest(http.MethodGet, h.ts.URL+"/healthz", nil)

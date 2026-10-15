@@ -131,7 +131,7 @@ curl -s -X POST $BASE/v1/users -H "Authorization: Bearer $KEY" \
 | `POST /auth/signup` · `/auth/login` · `/auth/logout` | Account auth (session cookie) |
 | `GET /auth/verify` · `POST /auth/forgot` · `/auth/reset` | Email verification & password reset |
 | `POST /v1/apps` · `GET /v1/apps` | Create/list apps (session-authed, owner-scoped) → key shown once |
-| `GET /v1/apps/{id}/stats` | App counters — `{"players": N}` registered (session-authed, owner-scoped) |
+| `GET /v1/apps/{id}/stats` | App counters — `{"players": N, "bound": M}` registered vs. token-bound (session-authed, owner-scoped) |
 | `POST /v1/boards` | Define a board |
 | `GET /v1/boards` | List boards |
 | `POST /v1/boards/{board}/scores` | Submit a score (write-behind) |
@@ -189,9 +189,19 @@ off, so existing apps keep working. Rollout order:
 1. Deploy the server and dashboard.
 2. Issue a publishable key and ship clients that use it and send `X-Player-Token`
    (TypeScript SDK 0.7.0+).
-3. Wait until most players have updated.
+3. Wait until most players have updated. Watch "bound" against "registered" on
+   the dashboard's player count.
 4. Turn on *Require signed submissions* and *Require player tokens*.
 5. Revoke the old secret keys that are baked into old client builds.
+
+A member that never sends a token is never bound, so while the switch is off
+anyone holding a publishable key can still bind that member first. The window
+does not close for players who never update; compare "bound" with "registered"
+before flipping the switch. (The bound count only includes bindings made since
+the counter was added.)
+
+**SDK releases.** Merging a version bump under `sdk/typescript` to `main` makes
+CI publish it to npm.
 
 **Two auth planes** on the data plane (`/v1/boards/*` and `/v1/users*`): game clients use `Authorization: Bearer
 <api-key>` (or `X-API-Key`); the dashboard uses its session cookie plus an

@@ -61,6 +61,13 @@ func contract(t *testing.T, s Store, app string) {
 	if wins != 1 {
 		t.Fatalf("race: %d winners, want 1", wins)
 	}
+	// bindings counts distinct members bound per app: m1, m2, race
+	if n, err := s.Bindings(ctx, app); err != nil || n != 3 {
+		t.Fatalf("bindings(%s) = %d, %v; want 3", app, n, err)
+	}
+	if n, err := s.Bindings(ctx, app+"x"); err != nil || n != 1 {
+		t.Fatalf("bindings(%sx) = %d, %v; want 1", app, n, err)
+	}
 }
 
 func TestMemStore(t *testing.T) { contract(t, NewMemStore(), "app_mem") }
@@ -78,9 +85,11 @@ func TestRedisStore(t *testing.T) {
 	}
 	app := "app_test_" + time.Now().Format("150405.000000")
 	t.Cleanup(func() {
-		keys, _ := rdb.Keys(context.Background(), "ply:tok:"+app+"*").Result()
-		if len(keys) > 0 {
-			rdb.Del(context.Background(), keys...)
+		for _, pat := range []string{"ply:tok:" + app + "*", "ply:count:" + app + "*"} {
+			keys, _ := rdb.Keys(context.Background(), pat).Result()
+			if len(keys) > 0 {
+				rdb.Del(context.Background(), keys...)
+			}
 		}
 	})
 	contract(t, NewRedisStore(rdb), app)

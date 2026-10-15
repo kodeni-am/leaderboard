@@ -24,6 +24,8 @@ type Store interface {
 	// requires the same token. Returns ErrTokenRequired for "", ErrInvalidToken
 	// for a malformed token, ErrTokenMismatch for a different one.
 	Authorize(ctx context.Context, appID, member, token string) error
+	// Bindings returns how many members of appID have a token bound.
+	Bindings(ctx context.Context, appID string) (int64, error)
 }
 
 // ValidToken reports whether t is a well-formed player token.

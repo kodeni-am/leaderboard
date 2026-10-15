@@ -13,6 +13,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [playerCount, setPlayerCount] = useState<number | null>(null);
+  const [boundCount, setBoundCount] = useState<number | null>(null);
   const loadAppsReq = useRef(0);
 
   // The selected app lives in ?app=, not in component state, so a reload or a
@@ -68,12 +69,14 @@ export default function Dashboard() {
     const gen = ++loadPlayerCountReq.current;
     if (!id) {
       setPlayerCount(null);
+      setBoundCount(null);
       return;
     }
     try {
-      const { players } = await api.appStats(id);
+      const { players, bound } = await api.appStats(id);
       if (gen !== loadPlayerCountReq.current) return; // superseded by a newer load
       setPlayerCount(players);
+      setBoundCount(bound);
     } catch {
       if (gen !== loadPlayerCountReq.current) return; // superseded; stale errors must not surface either
       setPlayerCount(null);
@@ -141,9 +144,9 @@ export default function Dashboard() {
                     {playerCount !== null && (
                       <span
                         className="label"
-                        title="Registered players (nicknames) in this app. A board can have more members than this — anyone who submits a score counts on the board without registering. See each board's TOP N OF M."
+                        title="Registered players (nicknames) in this app; bound = members that have proven a player token. Compare them before turning on Require player tokens. A board can have more members than this — anyone who submits a score counts on the board without registering. See each board's TOP N OF M."
                       >
-                        {playerCount.toLocaleString()} registered
+                        {playerCount.toLocaleString()} registered{boundCount !== null && ` · ${boundCount.toLocaleString()} bound`}
                       </span>
                     )}
                   </div>
@@ -525,6 +528,7 @@ function AppPlayerTokens({ appId }: { appId: string }) {
     }
   }
   useEffect(() => {
+    setSt(null); // never show the previous app's switch against this one
     setErr("");
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -539,7 +543,19 @@ function AppPlayerTokens({ appId }: { appId: string }) {
     }
   }
 
-  if (!st) return null;
+  if (!st) {
+    if (!err) return null;
+    return (
+      <div className="panel">
+        <div className="panel-head">
+          <span className="label">Require player tokens</span>
+        </div>
+        <div className="panel-body">
+          <div className="notice notice-alarm">{err}</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="panel">

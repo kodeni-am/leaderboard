@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/kodeni-am/leaderboard/pkg/engine"
@@ -120,6 +121,21 @@ func TestAppStats(t *testing.T) {
 	}
 	if n := players(); n != 2 {
 		t.Fatalf("after 2 registrations: %d, want 2", n)
+	}
+
+	// "bound" counts members that proved a token, separate from registrations.
+	if _, body := h.call(t, http.MethodGet, "/v1/apps/"+h.appID+"/stats", nil, nil); !strings.Contains(string(body), `"bound":0`) {
+		t.Fatalf("bound before any token: %s", body)
+	}
+	pub := h.issuePublishable(t)
+	if resp, body := h.call(t, http.MethodPost, "/v1/users", with(pub, ptA), map[string]string{"nickname": "Bound", "member": "m-bound"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("claim with token: %d %s", resp.StatusCode, body)
+	}
+	if _, body := h.call(t, http.MethodGet, "/v1/apps/"+h.appID+"/stats", nil, nil); !strings.Contains(string(body), `"bound":1`) || !strings.Contains(string(body), `"players":3`) {
+		t.Fatalf("stats after one binding: %s", body)
+	}
+	if resp, body := h.call(t, http.MethodDelete, "/v1/users/m-bound", h.sess(), nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete bound player: %d %s", resp.StatusCode, body)
 	}
 
 	// Deleting a player drops the count.

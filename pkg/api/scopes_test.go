@@ -40,6 +40,10 @@ func TestPublishableKeyScope(t *testing.T) {
 	if resp, body := h.call(t, http.MethodDelete, "/v1/boards/hs/scores/someone", pub, nil); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("publishable remove score: %d %s", resp.StatusCode, body)
 	}
+	// a dashboard session is not a publishable key: it passes secretOnly
+	if resp, body := h.call(t, http.MethodPost, "/v1/boards", h.sess(), map[string]any{"board": "hs3"}); resp.StatusCode >= 300 {
+		t.Fatalf("session creates board: %d %s", resp.StatusCode, body)
+	}
 	// player routes and reads: allowed (no tokens required yet)
 	if resp, body := h.call(t, http.MethodPost, "/v1/boards/hs/scores", pub, map[string]any{"member": "surfer-1", "score": 10}); resp.StatusCode >= 300 {
 		t.Fatalf("publishable submit: %d %s", resp.StatusCode, body)

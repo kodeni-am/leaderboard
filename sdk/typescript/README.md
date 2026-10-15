@@ -71,7 +71,7 @@ const lb = new LeaderboardClient(url, publishableKey, {
 
 Token failures throw `PlayerTokenError`, whose `.code` is one of:
 
-- `player_token_required` (401): the member is bound and no token was sent.
+- `player_token_required` (401): a publishable key sent no token while the app requires player tokens.
 - `player_token_mismatch` (403): the token does not match the member's binding.
 - `invalid_player_token` (400): the token is malformed.
 

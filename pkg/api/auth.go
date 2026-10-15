@@ -479,7 +479,12 @@ func (s *Server) handleAppStats(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"players": n})
+	bound, err := s.players.Bindings(r.Context(), app.ID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"players": n, "bound": bound})
 }
 
 func (s *Server) handleDeleteApp(w http.ResponseWriter, r *http.Request) {

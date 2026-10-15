@@ -60,13 +60,13 @@ func TestPlayerTokens(t *testing.T) {
 		t.Fatalf("claim own member: %d %s", resp.StatusCode, body)
 	}
 	resp, body = h.call(t, http.MethodPost, "/v1/users", with(pub, ptB), map[string]string{"nickname": "Thief", "member": "surfer-1"})
-	if resp.StatusCode != http.StatusForbidden {
+	if resp.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "player_token_mismatch") {
 		t.Fatalf("claim someone else's member: %d %s", resp.StatusCode, body)
 	}
-	if resp, body = h.call(t, http.MethodPatch, "/v1/users/surfer-1", with(pub, ptB), map[string]string{"nickname": "Stolen"}); resp.StatusCode != http.StatusForbidden {
+	if resp, body = h.call(t, http.MethodPatch, "/v1/users/surfer-1", with(pub, ptB), map[string]string{"nickname": "Stolen"}); resp.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "player_token_mismatch") {
 		t.Fatalf("rename with other token: %d %s", resp.StatusCode, body)
 	}
-	if resp, body = h.call(t, http.MethodDelete, "/v1/users/surfer-1", with(pub, ptB), nil); resp.StatusCode != http.StatusForbidden {
+	if resp, body = h.call(t, http.MethodDelete, "/v1/users/surfer-1", with(pub, ptB), nil); resp.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "player_token_mismatch") {
 		t.Fatalf("delete with other token: %d %s", resp.StatusCode, body)
 	}
 	if resp, body = h.call(t, http.MethodPatch, "/v1/users/surfer-1", with(pub, ptA), map[string]string{"nickname": "Wave2"}); resp.StatusCode != http.StatusOK {
@@ -102,7 +102,37 @@ func TestPlayerTokens(t *testing.T) {
 	if c, b := submit(h.key(), "surfer-3"); c >= 300 {
 		t.Fatalf("secret key, no token, switch on: %d %s", c, b)
 	}
+	// every token-guarded user route refuses a publishable key without a token
+	for name, call := range map[string]func() (*http.Response, []byte){
+		"claim": func() (*http.Response, []byte) {
+			return h.call(t, http.MethodPost, "/v1/users", pub, map[string]string{"nickname": "NoTok", "member": "surfer-1"})
+		},
+		"mint": func() (*http.Response, []byte) {
+			return h.call(t, http.MethodPost, "/v1/users", pub, map[string]string{"nickname": "NoTokMint"})
+		},
+		"rename": func() (*http.Response, []byte) {
+			return h.call(t, http.MethodPatch, "/v1/users/surfer-1", pub, map[string]string{"nickname": "NoTok2"})
+		},
+		"delete": func() (*http.Response, []byte) { return h.call(t, http.MethodDelete, "/v1/users/surfer-1", pub, nil) },
+	} {
+		if resp, body := call(); resp.StatusCode != http.StatusUnauthorized || !strings.Contains(string(body), "player_token_required") {
+			t.Fatalf("%s without token, switch on: %d %s", name, resp.StatusCode, body)
+		}
+	}
 	if resp, body = h.call(t, http.MethodGet, "/v1/apps/"+h.appID+"/player-tokens", h.sess(), nil); !strings.Contains(string(body), `"require_player_tokens":true`) {
 		t.Fatalf("get switch: %d %s", resp.StatusCode, body)
+	}
+}
+
+func TestPlayerTokenMalformedMint(t *testing.T) {
+	h := newHarness(t)
+	h.onboard(t, "malformed@example.com")
+	pub := h.issuePublishable(t)
+	resp, body := h.call(t, http.MethodPost, "/v1/users", with(pub, "short"), map[string]string{"nickname": "Ghost"})
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "invalid_player_token") {
+		t.Fatalf("malformed mint: %d %s", resp.StatusCode, body)
+	}
+	if resp, _ := h.call(t, http.MethodGet, "/v1/users?nickname=Ghost", h.key(), nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("no user may be created by a refused mint: %d", resp.StatusCode)
 	}
 }
