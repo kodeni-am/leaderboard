@@ -1,6 +1,6 @@
 {
   "name": "@openleaderboard/sdk",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "TypeScript client for the OpenLeaderboard API (browser + Node 18+).",
   "type": "module",
   "main": "./dist/index.js",

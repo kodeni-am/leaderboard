@@ -50,10 +50,33 @@ await lb.registerUser("Ninja", { member: anonymousId });
 await lb.renameUser(u.user_id, "Shadow");            // id and board data unaffected
 ```
 
-Trust caveat for claims: the API key is the only data-plane credential, so any
-client holding it can claim a nickname for any raw member id — the same trust
-level as unsigned score submits. Treat claims as untrusted input unless you
-sign submissions and proxy registration through your backend.
+Trust caveat for claims: without player tokens, the API key is the only
+data-plane credential, so any client holding it can claim a nickname for any
+raw member id — the same trust level as unsigned score submits. Treat claims as
+untrusted input unless you sign submissions, use player tokens, or proxy
+registration through your backend.
+
+### Player tokens
+
+Pass `playerToken` to bind writes to the player. The client sends it as
+`X-Player-Token` on every request. The server binds the token to a member on
+first write and then requires it for that member's writes. Use a getter to swap
+tokens at run time; it is read once per request.
+
+```ts
+const lb = new LeaderboardClient(url, publishableKey, {
+  playerToken: () => store.getToken(), // 32–128 chars of [0-9a-zA-Z_-]
+});
+```
+
+Token failures throw `PlayerTokenError`, whose `.code` is one of:
+
+- `player_token_required` (401): the member is bound and no token was sent.
+- `player_token_mismatch` (403): the token does not match the member's binding.
+- `invalid_player_token` (400): the token is malformed.
+
+Ship the publishable key with tokens. Keep the secret key (and `signingSecret`)
+on your backend.
 
 ### One-time board setup
 

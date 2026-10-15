@@ -86,6 +86,13 @@ export interface ClientOptions {
    * — never ship it in browser/client code.
    */
   signingSecret?: string;
+  /**
+   * The player's token (32–128 chars of [0-9a-zA-Z_-]), sent as
+   * `X-Player-Token`. The server binds it to a member on first write and then
+   * requires it for that member's writes. Pass a getter to swap tokens at run
+   * time (e.g. after restoring an identity); it is read once per request.
+   */
+  playerToken?: string | (() => string | undefined);
   /** Override the fetch implementation (e.g. for Node <18 or tests). */
   fetch?: FetchLike;
 }
@@ -119,6 +126,21 @@ export class MemberTakenError extends LeaderboardError {
   constructor(message: string) {
     super(409, message);
     this.name = "MemberTakenError";
+  }
+}
+
+/**
+ * A player-token failure: missing (401), wrong (403) or malformed (400).
+ * `code` is the server's stable error code.
+ */
+export class PlayerTokenError extends LeaderboardError {
+  constructor(
+    status: number,
+    public readonly code: "player_token_required" | "player_token_mismatch" | "invalid_player_token",
+    message: string,
+  ) {
+    super(status, message);
+    this.name = "PlayerTokenError";
   }
 }
 
@@ -228,8 +250,9 @@ export class LeaderboardClient {
    * place instead of minting one: `user_id` echoes it and the nickname
    * attaches to that member's existing rows — no resubmit, no delete. Throws
    * {@link MemberTakenError} if that id is already registered. Trust caveat:
-   * anyone holding the API key can claim any raw member id — the same trust
-   * level as unsigned score submits.
+   * without player tokens, anyone holding the API key can claim any raw member
+   * id — the same trust level as unsigned score submits. With `playerToken`
+   * set, only the token holder can claim a member it has bound.
    */
   async registerUser(nickname: string, opts: { member?: string } = {}): Promise<User> {
     return this.send("POST", "/v1/users", { nickname, member: opts.member });
@@ -275,6 +298,8 @@ export class LeaderboardClient {
 
   private async send(method: string, path: string, body?: unknown): Promise<any> {
     const headers: Record<string, string> = { Authorization: `Bearer ${this.apiKey}` };
+    const pt = typeof this.opts.playerToken === "function" ? this.opts.playerToken() : this.opts.playerToken;
+    if (pt) headers["X-Player-Token"] = pt;
     let bodyStr: string | undefined;
     if (body !== undefined) {
       headers["Content-Type"] = "application/json";
@@ -287,6 +312,9 @@ export class LeaderboardClient {
       // The server distinguishes the two conflict causes with stable codes.
       if (text.includes("member_taken")) throw new MemberTakenError(text);
       throw new NicknameTakenError(text);
+    }
+    for (const code of ["player_token_required", "player_token_mismatch", "invalid_player_token"] as const) {
+      if (!resp.ok && text.includes(code)) throw new PlayerTokenError(resp.status, code, text);
     }
     if (!resp.ok) throw new LeaderboardError(resp.status, `${method} ${path} -> ${resp.status}: ${text}`);
     return text ? JSON.parse(text) : {};

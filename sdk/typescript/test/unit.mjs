@@ -1,6 +1,6 @@
 // Unit test of request/error shapes using a mock fetch — no server needed.
 // Run after `npm run build`.
-import { LeaderboardClient, MemberTakenError, NicknameTakenError } from "../dist/index.js";
+import { LeaderboardClient, MemberTakenError, NicknameTakenError, PlayerTokenError } from "../dist/index.js";
 
 function assert(cond, msg) {
   if (!cond) {
@@ -49,5 +49,38 @@ try {
   nickTaken = e instanceof NicknameTakenError && !(e instanceof MemberTakenError);
 }
 assert(nickTaken, "nickname_taken throws NicknameTakenError");
+
+// player token: sent as a header on every request, read through the getter at call time
+let current = "t".repeat(64);
+const tokCalls = [];
+const tl = new LeaderboardClient("http://test", "key", {
+  playerToken: () => current,
+  fetch: (url, init) => {
+    tokCalls.push(init);
+    return Promise.resolve(new Response(JSON.stringify({ accepted: true }), { status: 202 }));
+  },
+});
+await tl.submitScore("hs", "surfer-1", 5);
+assert(tokCalls.at(-1).headers["X-Player-Token"] === "t".repeat(64), "token header sent");
+current = "u".repeat(64);
+await tl.deleteUser("surfer-1");
+assert(tokCalls.at(-1).headers["X-Player-Token"] === "u".repeat(64), "getter read per call");
+current = undefined;
+await tl.getTop("hs", 5);
+assert(!("X-Player-Token" in tokCalls.at(-1).headers), "no header without a token");
+
+// token errors map to PlayerTokenError with the server's code
+for (const [status, code] of [[403, "player_token_mismatch"], [401, "player_token_required"], [400, "invalid_player_token"]]) {
+  const el = new LeaderboardClient("http://test", "key", {
+    fetch: () => Promise.resolve(new Response(JSON.stringify({ error: code }), { status })),
+  });
+  let got = null;
+  try {
+    await el.submitScore("hs", "m", 1);
+  } catch (e) {
+    got = e;
+  }
+  assert(got instanceof PlayerTokenError && got.code === code && got.status === status, `${code} -> PlayerTokenError`);
+}
 
 console.log("PASS: unit");
