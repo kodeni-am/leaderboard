@@ -3,8 +3,9 @@ name: release-sdk
 # Publishes sdk/typescript to npm when its version in package.json is one that
 # isn't on npm yet. package.json is authoritative: bump the version in your PR,
 # and merging to main publishes exactly that version. Changes without a version
-# bump are a no-op (the version is already published → skipped). Requires an
-# NPM_TOKEN repo secret (npm "Automation" token).
+# bump are a no-op (the version is already published → skipped). Auth is npm
+# trusted publishing (OIDC): npmjs.com › @openleaderboard/sdk › Trusted
+# publisher names this repo and this workflow file, so no token is stored.
 on:
   push:
     branches: [main]
@@ -19,6 +20,9 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for npm trusted publishing
     defaults:
       run:
         working-directory: sdk/typescript
@@ -26,8 +30,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
+      # trusted publishing needs npm >= 11.5.1
+      - run: npm install -g npm@^11.5.1
       - run: npm install --no-audit --no-fund
 
       - name: Check whether this version is already published
@@ -47,5 +53,3 @@ jobs:
       - name: Publish
         if: steps.guard.outputs.publish == 'true'
         run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
