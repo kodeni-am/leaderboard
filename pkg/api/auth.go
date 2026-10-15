@@ -23,7 +23,31 @@ const (
 
 type ctxKey int
 
-const userCtxKey ctxKey = 1
+const (
+	userCtxKey  ctxKey = 1
+	scopeCtxKey ctxKey = 2
+)
+
+// keyScopeFrom is the caller's key scope; dashboard sessions are secret.
+func keyScopeFrom(ctx context.Context) tenancy.KeyScope {
+	if sc, ok := ctx.Value(scopeCtxKey).(tenancy.KeyScope); ok {
+		return sc
+	}
+	return tenancy.ScopeSecret
+}
+
+// secretOnly guards app-wide (admin) data-plane routes: a publishable key —
+// the kind shipped inside game clients — must never create boards or
+// moderate other players.
+func (s *Server) secretOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if keyScopeFrom(r.Context()) != tenancy.ScopeSecret {
+			writeErr(w, http.StatusForbidden, "secret_key_required")
+			return
+		}
+		next(w, r)
+	}
+}
 
 func userFromContext(ctx context.Context) (accounts.User, bool) {
 	u, ok := ctx.Value(userCtxKey).(accounts.User)
@@ -120,12 +144,13 @@ func (s *Server) requireUser(next http.HandlerFunc) http.Handler {
 func (s *Server) requireApp(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if key := bearerToken(r); key != "" {
-			app, err := s.store.AppByKey(r.Context(), key)
+			app, scope, err := s.store.AuthKey(r.Context(), key)
 			if err != nil {
 				writeErr(w, http.StatusUnauthorized, "invalid api key")
 				return
 			}
-			next(w, r.WithContext(tenancy.WithApp(r.Context(), app)))
+			ctx := context.WithValue(tenancy.WithApp(r.Context(), app), scopeCtxKey, scope)
+			next(w, r.WithContext(ctx))
 			return
 		}
 		if u, ok := s.userFromCookie(r); ok {
@@ -337,13 +362,27 @@ func (s *Server) handleIssueKey(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	plain, key, err := s.store.IssueKey(r.Context(), app.ID, tenancy.ScopeSecret)
+	var req struct {
+		Scope string `json:"scope"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeErr(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+	}
+	scope, valid := tenancy.ParseScope(req.Scope)
+	if !valid {
+		writeErr(w, http.StatusBadRequest, "scope must be secret or publishable")
+		return
+	}
+	plain, key, err := s.store.IssueKey(r.Context(), app.ID, scope)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	// Plaintext is shown exactly once.
-	writeJSON(w, http.StatusCreated, map[string]any{"id": key.ID, "prefix": key.Prefix, "api_key": plain})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": key.ID, "prefix": key.Prefix, "api_key": plain, "scope": key.Scope})
 }
 
 func (s *Server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {

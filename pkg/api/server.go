@@ -188,10 +188,10 @@ func (s *Server) Handler() http.Handler {
 	user("GET /v1/apps/{id}/stats", s.handleAppStats)
 
 	// Data plane (API-key or session+app-id).
-	dataPlane("POST /v1/boards", s.handleCreateBoard)
+	dataPlane("POST /v1/boards", s.secretOnly(s.handleCreateBoard))
 	dataPlane("GET /v1/boards", s.handleListBoards)
 	dataPlane("POST /v1/boards/{board}/scores", s.handleSubmit)
-	dataPlane("DELETE /v1/boards/{board}/scores/{member}", s.handleRemoveScore)
+	dataPlane("DELETE /v1/boards/{board}/scores/{member}", s.secretOnly(s.handleRemoveScore))
 	dataPlane("GET /v1/boards/{board}/rank", s.handleRank)
 	dataPlane("GET /v1/boards/{board}/top", s.handleTop)
 	dataPlane("GET /v1/boards/{board}/page", s.handlePage)
